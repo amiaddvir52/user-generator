@@ -1,6 +1,7 @@
 import type { AIProvider, ProviderBackend } from "../../shared/config.js";
 
 export type OutputMode = "text" | "json";
+export type ExecutionMode = "fast" | "full";
 
 export type ReasonCode =
   | "PATH_INVALID"

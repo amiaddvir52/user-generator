@@ -7,6 +7,13 @@ import {
   validateRepositoryStructure
 } from "../repo/validator.js";
 import { runPlaywrightList } from "./playwright-list.js";
+import {
+  buildValidationCacheKey,
+  isValidationCacheHit,
+  resolveValidationCacheEnabled,
+  resolveValidationCacheTtlMs,
+  writeValidationCacheHit
+} from "./validation-cache.js";
 
 export type PreflightResult = {
   repo: Awaited<ReturnType<typeof validateRepositoryStructure>>;
@@ -45,11 +52,43 @@ export const runPreflightGates = async ({
   }
 
   if (dryList) {
-    await runPlaywrightList({
-      repo,
-      configPath: repo.playwrightConfigPath,
-      env
+    const validationCacheEnabled = resolveValidationCacheEnabled(env);
+    const cacheTtlMs = resolveValidationCacheTtlMs({ env });
+    const canUseCache = validationCacheEnabled && !repo.isDirty;
+    const cacheKey = buildValidationCacheKey({
+      kind: "repo-list",
+      components: {
+        fingerprint: fingerprint.fingerprint,
+        repoPath: repo.absPath.replace(/\\/g, "/"),
+        configPath: repo.playwrightConfigPath.replace(/\\/g, "/"),
+        environment: env?.TUG_ENVIRONMENT ?? env?.env ?? null,
+        cloudProvider: env?.cloudProvider ?? null,
+        region: env?.region ?? null
+      }
     });
+
+    const cacheHit = canUseCache
+      ? await isValidationCacheHit({
+          kind: "repo-list",
+          key: cacheKey
+        })
+      : false;
+
+    if (!cacheHit) {
+      await runPlaywrightList({
+        repo,
+        configPath: repo.playwrightConfigPath,
+        env
+      });
+
+      if (canUseCache) {
+        await writeValidationCacheHit({
+          kind: "repo-list",
+          key: cacheKey,
+          ttlMs: cacheTtlMs
+        });
+      }
+    }
   }
 
   return {

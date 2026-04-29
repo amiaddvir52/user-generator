@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { createUnifiedDiff } from "../transform/diff.js";
 import { transformSelectedSpec } from "../transform/transformer.js";
 import { assertConfidenceThreshold } from "../transform/confidence.js";
@@ -5,11 +7,19 @@ import { buildSandbox, cleanupSandbox } from "../sandbox/builder.js";
 import { runTypecheck } from "../validate/typecheck.js";
 import { runPlaywrightList } from "../validate/playwright-list.js";
 import { validateSyntaxRoundTrip } from "../validate/syntax.js";
+import {
+  buildValidationCacheKey,
+  isValidationCacheHit,
+  resolveValidationCacheEnabled,
+  resolveValidationCacheTtlMs,
+  writeValidationCacheHit
+} from "../validate/validation-cache.js";
 import { buildSpecIndex } from "../indexer/spec-indexer.js";
 import { loadIndexCache, saveIndexCache } from "../indexer/cache.js";
 import { buildPlaywrightDisplayTitle, buildPlaywrightGrepPattern } from "../common/playwright.js";
 import type {
   CompatibilityResult,
+  ExecutionMode,
   IndexData,
   RepoHandle,
   SandboxHandle,
@@ -90,6 +100,7 @@ export const transformIntoSandbox = async ({
   compatibility,
   index,
   interactiveConfirm,
+  executionMode = "full",
   env
 }: {
   entry: SpecIndexEntry;
@@ -98,6 +109,7 @@ export const transformIntoSandbox = async ({
   compatibility: CompatibilityResult;
   index: IndexData;
   interactiveConfirm: boolean;
+  executionMode?: ExecutionMode;
   env?: NodeJS.ProcessEnv;
 }) => {
   const transform = await transformSelectedSpec({
@@ -105,7 +117,8 @@ export const transformIntoSandbox = async ({
     teardown: index.teardown,
     compatibilityStatus: compatibility.status,
     workingTreeDirty: repo.isDirty,
-    knownFingerprint: compatibility.status === "supported"
+    knownFingerprint: compatibility.status === "supported",
+    executionMode
   });
 
   if (transform.uncertainIdentifiers.length > 0) {
@@ -181,29 +194,67 @@ export const transformIntoSandbox = async ({
       tsconfigPath: sandbox.tsconfigPath
     });
 
-    await runTypecheck({
-      repo,
-      tsconfigPath: sandbox.tsconfigPath
-    });
-
-    const listResult = await runPlaywrightList({
-      repo,
-      configPath: sandbox.playwrightConfigPath,
-      expectedTitle,
-      env
-    });
-
-    if (listResult.tests.length !== 1) {
-      tugLog("sandbox.list.unexpected", {
+    const validationCacheEnabled = resolveValidationCacheEnabled(env);
+    const validationCacheTtlMs = resolveValidationCacheTtlMs({ env });
+    const canUseValidationCache = validationCacheEnabled && !repo.isDirty;
+    const transformedSpecHash = crypto
+      .createHash("sha256")
+      .update(transform.transformedText)
+      .digest("hex");
+    const sandboxValidationCacheKey = buildValidationCacheKey({
+      kind: "sandbox-validation",
+      components: {
+        fingerprint,
+        sourceFile: entry.filePath.replace(/\\/g, "/"),
+        testTitle: entry.testTitle,
         expectedTitle,
-        testCount: listResult.tests.length,
-        tests: listResult.tests
+        executionMode,
+        transformedSpecHash,
+        environment: env?.TUG_ENVIRONMENT ?? env?.env ?? null,
+        cloudProvider: env?.cloudProvider ?? null,
+        region: env?.region ?? null
+      }
+    });
+    const sandboxValidationCacheHit = canUseValidationCache
+      ? await isValidationCacheHit({
+          kind: "sandbox-validation",
+          key: sandboxValidationCacheKey
+        })
+      : false;
+
+    if (!sandboxValidationCacheHit) {
+      await runTypecheck({
+        repo,
+        tsconfigPath: sandbox.tsconfigPath
       });
-      throw new TugError(
-        "VALIDATION_FAILED",
-        `Sandbox Playwright list expected 1 test for "${expectedTitle}", got ${listResult.tests.length}.`,
-        listResult.tests
-      );
+
+      const listResult = await runPlaywrightList({
+        repo,
+        configPath: sandbox.playwrightConfigPath,
+        expectedTitle,
+        env
+      });
+
+      if (listResult.tests.length !== 1) {
+        tugLog("sandbox.list.unexpected", {
+          expectedTitle,
+          testCount: listResult.tests.length,
+          tests: listResult.tests
+        });
+        throw new TugError(
+          "VALIDATION_FAILED",
+          `Sandbox Playwright list expected 1 test for "${expectedTitle}", got ${listResult.tests.length}.`,
+          listResult.tests
+        );
+      }
+
+      if (canUseValidationCache) {
+        await writeValidationCacheHit({
+          kind: "sandbox-validation",
+          key: sandboxValidationCacheKey,
+          ttlMs: validationCacheTtlMs
+        });
+      }
     }
   } catch (error) {
     if (sandbox) {

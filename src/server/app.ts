@@ -116,6 +116,8 @@ const UserGenerationBodySchema = z
     spec: z.string().trim().min(1).optional(),
     test: z.string().trim().min(1).optional(),
     environment: z.string().trim().min(1).optional(),
+    executionMode: z.enum(["fast", "full"]).optional(),
+    allowAutoFallback: z.boolean().optional(),
     enableRcpMock: z.boolean().optional(),
     trustUnknown: z.boolean().optional(),
     trustUncertainTeardown: z.boolean().optional(),
@@ -575,6 +577,8 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
 
     const trustUnknown = parsedBody.data.trustUnknown ?? true;
     const trustUncertainTeardown = parsedBody.data.trustUncertainTeardown ?? true;
+    const executionMode = parsedBody.data.executionMode ?? "fast";
+    const allowAutoFallback = parsedBody.data.allowAutoFallback ?? true;
     const enableRcpMock = parsedBody.data.enableRcpMock ?? false;
     const keepSandbox = parsedBody.data.keepSandbox ?? false;
     const reindex = parsedBody.data.reindex ?? false;
@@ -586,6 +590,8 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
           spec: parsedBody.data.spec,
           test: parsedBody.data.test,
           environment: normalizedEnvironment,
+          executionMode,
+          allowAutoFallback,
           enableRcpMock,
           trustUnknown,
           trustUncertainTeardown,
@@ -599,6 +605,8 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
         compatibility: payload.compatibility,
         selectedTest: payload.selectedTest,
         environment: payload.environment,
+        executionMode: payload.executionMode,
+        fallbackTriggered: payload.fallbackTriggered,
         confidence: payload.confidence,
         removedCalls: payload.removedCalls,
         sandboxPath: payload.sandboxPath,
@@ -614,6 +622,8 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
           spec: parsedBody.data.spec,
           test: parsedBody.data.test,
           environment: normalizedEnvironment,
+          executionMode,
+          allowAutoFallback,
           enableRcpMock,
           trustUnknown,
           trustUncertainTeardown,
@@ -625,6 +635,8 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
           compatibility: response.compatibility,
           selectedTest: response.selectedTest,
           environment: response.environment,
+          executionMode: response.executionMode,
+          fallbackTriggered: response.fallbackTriggered,
           confidence: response.confidence,
           sandboxPath: response.sandboxPath,
           credentials: response.credentials,

@@ -12,6 +12,13 @@ const includesKeyword = (entry: SpecIndexEntry, keyword: string) => {
   return entry.tags.some((tag) => tag.toLowerCase() === keyword || tag.toLowerCase().includes(keyword));
 };
 
+const estimateExecutionCost = (entry: SpecIndexEntry) => {
+  const directCallWeight = entry.teardownCalls.length * 1.5;
+  const describeDepthWeight = entry.describeTitles.length;
+  const titleLengthWeight = entry.testTitle.length > 120 ? 1 : 0;
+  return directCallWeight + describeDepthWeight + titleLengthWeight;
+};
+
 export const scoreEntry = (entry: SpecIndexEntry, intent: Intent): RankedCandidate => {
   const reasons: string[] = [];
   let score = 0;
@@ -50,6 +57,13 @@ export const scoreEntry = (entry: SpecIndexEntry, intent: Intent): RankedCandida
     reasons.push("exact prompt snippet match");
   }
 
+  const estimatedCost = estimateExecutionCost(entry);
+  const costBonus = Math.max(0, 0.08 - Math.min(estimatedCost, 20) * 0.004);
+  if (costBonus > 0) {
+    score += costBonus;
+    reasons.push("lower estimated execution cost");
+  }
+
   return {
     entry,
     score: Number(score.toFixed(4)),
@@ -65,10 +79,14 @@ export const rankCandidates = (entries: SpecIndexEntry[], intent: Intent): Ranke
         return right.score - left.score;
       }
 
+      const costDelta = estimateExecutionCost(left.entry) - estimateExecutionCost(right.entry);
+      if (costDelta !== 0) {
+        return costDelta;
+      }
+
       if (left.entry.filePath !== right.entry.filePath) {
         return left.entry.filePath.localeCompare(right.entry.filePath);
       }
 
       return left.entry.testTitle.localeCompare(right.entry.testTitle);
     });
-

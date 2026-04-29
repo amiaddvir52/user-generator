@@ -9,6 +9,8 @@ export type UserGenerationRequest = {
   spec?: string;
   test?: string;
   environment?: string;
+  executionMode?: "fast" | "full";
+  allowAutoFallback?: boolean;
   enableRcpMock?: boolean;
   trustUnknown?: boolean;
   trustUncertainTeardown?: boolean;

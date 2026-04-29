@@ -14,7 +14,10 @@ import { flushBufferedLines, readBufferedLines } from "../src/tug/execute/stdio.
 import { TugError } from "../src/tug/common/errors.js";
 import { buildPlaywrightDisplayTitle, buildPlaywrightGrepPattern } from "../src/tug/common/playwright.js";
 import { quoteForShellValue } from "../src/tug/common/shell.js";
-import { credentialProbeStatements } from "../src/tug/transform/credential-probe.js";
+import {
+  credentialProbeStatements,
+  earlyReturnCredentialProbeStatements
+} from "../src/tug/transform/credential-probe.js";
 import { validateSyntaxRoundTrip } from "../src/tug/validate/syntax.js";
 import { resolveSetupCacheRoot } from "../src/tug/common/paths.js";
 import { buildSandbox, cleanupSandbox } from "../src/tug/sandbox/builder.js";
@@ -30,6 +33,11 @@ import {
   isSetupCachePayloadFresh,
   parseSetupCachePayload
 } from "../src/tug/sandbox/setup-cache.js";
+import {
+  buildValidationCacheKey,
+  isValidationCacheHit,
+  writeValidationCacheHit
+} from "../src/tug/validate/validation-cache.js";
 
 const tempRoots: string[] = [];
 
@@ -269,6 +277,38 @@ describe("credential probe generation", () => {
     expect(statements).toContain("marketplaceId:");
     expect(statements).toContain("smAccountId:");
   });
+
+  it("can typecheck the fast-mode early-return probe block", () => {
+    const project = new Project({
+      useInMemoryFileSystem: true,
+      compilerOptions: {
+        module: ModuleKind.ESNext,
+        target: ScriptTarget.ESNext,
+        strict: true
+      }
+    });
+
+    project.createSourceFile(
+      "probe-fast.ts",
+      [
+        "const testBody = () => {",
+        ...earlyReturnCredentialProbeStatements().map((statement) => `  ${statement}`),
+        ...credentialProbeStatements().map((statement) => `  ${statement}`),
+        "};"
+      ].join("\n"),
+      { overwrite: true }
+    );
+
+    const diagnostics = project.getPreEmitDiagnostics();
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("does not reference possibly-TDZ locals in the fast-mode probe", () => {
+    const statements = earlyReturnCredentialProbeStatements().join("\n");
+    expect(statements).not.toContain("typeof marketplaceId");
+    expect(statements).not.toContain("typeof accountId");
+    expect(statements).not.toContain("typeof smAccountId");
+  });
 });
 
 describe("shell escaping", () => {
@@ -468,6 +508,61 @@ describe("setup cache utilities", () => {
     });
 
     expect(keyA).not.toBe(keyB);
+  });
+});
+
+describe("validation cache utilities", () => {
+  it("tracks hit/miss and expiry for persisted validation records", async () => {
+    const cacheHome = await createTempDir();
+    const previousXdg = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = cacheHome;
+
+    try {
+      const key = buildValidationCacheKey({
+        kind: "repo-list",
+        components: {
+          fingerprint: "fp_abc1234",
+          environment: "qa.qa"
+        }
+      });
+
+      await expect(
+        isValidationCacheHit({
+          kind: "repo-list",
+          key,
+          nowMs: 1_000
+        })
+      ).resolves.toBe(false);
+
+      await writeValidationCacheHit({
+        kind: "repo-list",
+        key,
+        ttlMs: 1_000,
+        nowMs: 1_000
+      });
+
+      await expect(
+        isValidationCacheHit({
+          kind: "repo-list",
+          key,
+          nowMs: 1_500
+        })
+      ).resolves.toBe(true);
+
+      await expect(
+        isValidationCacheHit({
+          kind: "repo-list",
+          key,
+          nowMs: 2_100
+        })
+      ).resolves.toBe(false);
+    } finally {
+      if (previousXdg === undefined) {
+        delete process.env.XDG_CACHE_HOME;
+      } else {
+        process.env.XDG_CACHE_HOME = previousXdg;
+      }
+    }
   });
 });
 

@@ -4,13 +4,14 @@ import { Node, Project, SyntaxKind, type CallExpression, type Statement } from "
 import { TugError } from "../common/errors.js";
 import type {
   CompatibilityStatus,
+  ExecutionMode,
   RemovedCallsite,
   SpecIndexEntry,
   TeardownDetectionResult,
   TransformResult
 } from "../common/types.js";
 import { computeTransformConfidence } from "./confidence.js";
-import { credentialProbeStatements } from "./credential-probe.js";
+import { credentialProbeStatements, earlyReturnCredentialProbeStatements } from "./credential-probe.js";
 import { removeUnusedImportedSpecifiers, rewriteRelativeImportsToAbsolute } from "./import-rewriter.js";
 
 const AFTER_HOOK_PATTERN = /(^|\.)(afterEach|afterAll|beforeAll)$/;
@@ -128,13 +129,15 @@ export const transformSelectedSpec = async ({
   teardown,
   compatibilityStatus,
   workingTreeDirty,
-  knownFingerprint
+  knownFingerprint,
+  executionMode = "full"
 }: {
   entry: SpecIndexEntry;
   teardown: TeardownDetectionResult;
   compatibilityStatus: CompatibilityStatus;
   workingTreeDirty: boolean;
   knownFingerprint: boolean;
+  executionMode?: ExecutionMode;
 }): Promise<TransformResult> => {
   const originalText = await fs.readFile(entry.filePath, "utf8");
 
@@ -268,6 +271,9 @@ export const transformSelectedSpec = async ({
     );
   }
 
+  if (executionMode === "fast") {
+    selectedTestBody.insertStatements(0, earlyReturnCredentialProbeStatements().join("\n"));
+  }
   selectedTestBody.addStatements(credentialProbeStatements().join("\n"));
 
   rewriteRelativeImportsToAbsolute({

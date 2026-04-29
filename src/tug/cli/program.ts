@@ -75,6 +75,8 @@ export const createTugProgram = ({
     .option("--spec <path>", "Explicit spec file path.")
     .option("--test <title>", "Explicit test title.")
     .option("--environment <value>", "Override environment for execution context.")
+    .option("--execution-mode <mode>", "Execution mode: full (default) or fast.")
+    .option("--no-auto-fallback", "Disable fast->full fallback when credentials are incomplete.")
     .option("--yes", "Auto-accept confirmations.")
     .option("--keep-sandbox", "Retain sandbox after completion.")
     .option("--reindex", "Force index rebuild.")
@@ -89,4 +91,3 @@ export const createTugProgram = ({
 
   return program;
 };
-

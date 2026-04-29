@@ -57,7 +57,7 @@ tug index --repo <path> [--reindex] [--json]
 tug explain --repo <path> "<prompt>" [--top <n>] [--json]
 tug explain-teardowns --repo <path> [--json]
 tug dry-run --repo <path> --spec <file> --test "<title>" [--yes] [--keep-sandbox] [--json]
-tug run --repo <path> "<prompt>" [--yes] [--trust-unknown] [--output <file>] [--export-env] [--json]
+tug run --repo <path> "<prompt>" [--execution-mode <full|fast>] [--no-auto-fallback] [--yes] [--trust-unknown] [--output <file>] [--export-env] [--json]
 tug gc [--max-age-days <n>] [--json]
 ```
 
@@ -101,6 +101,13 @@ tug gc [--max-age-days <n>] [--json]
 - Transforms are performed in-memory and emitted into an external sandbox.
 - Validation gates run before execution (`tsc --noEmit`, Playwright `--list`).
 
+## Execution modes
+
+- UI user generation defaults to `executionMode=fast` with automatic fallback to `full`.
+- Fast mode adds an early credential probe and can short-circuit long assertion paths when credentials are already available after setup hooks.
+- If fast mode completes without complete primary credentials (`email` + `password`) and fallback is enabled, TUG reruns once in `full` mode.
+- CLI defaults to `full`; opt into fast mode with `--execution-mode fast`.
+
 ## Outputs and artifacts
 
 - Result JSON can be emitted with `--json` and persisted with `--output <file>` (mode `0600`).
@@ -122,6 +129,9 @@ tug gc [--max-age-days <n>] [--json]
 - Controls:
   - `TUG_SETUP_CACHE_ENABLED=0` disables cache usage.
   - `TUG_SETUP_CACHE_TTL_MS=<ms>` overrides cache TTL (default: `3600000`).
+- Validation cache controls:
+  - `TUG_VALIDATION_CACHE_ENABLED=0` disables validation cache usage.
+  - `TUG_VALIDATION_CACHE_TTL_MS=<ms>` overrides validation cache TTL (default: `600000`).
 
 ## Reason codes
 

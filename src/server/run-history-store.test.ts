@@ -20,6 +20,8 @@ const createHistoryEntry = (id: string, createdAt: string): RunHistoryEntry => (
   request: {
     prompt: `prompt-${id}`,
     environment: "qa.qa",
+    executionMode: "fast",
+    allowAutoFallback: true,
     enableRcpMock: false,
     trustUnknown: true,
     trustUncertainTeardown: true,
@@ -34,6 +36,8 @@ const createHistoryEntry = (id: string, createdAt: string): RunHistoryEntry => (
       title: `creates ${id}`
     },
     environment: "qa.qa",
+    executionMode: "fast",
+    fallbackTriggered: false,
     confidence: 0.9,
     sandboxPath: `/tmp/sandbox-${id}`,
     credentials: {
@@ -106,5 +110,61 @@ describe("run history store", () => {
     const loaded = await store.load();
     expect(loaded).toHaveLength(1);
     expect(loaded[0].id).toBe("new");
+  });
+
+  it("hydrates defaults when loading legacy entries without execution mode fields", async () => {
+    const configDir = await createTempDir();
+    const store = createRunHistoryStore({ configDir });
+
+    await fs.mkdir(path.dirname(store.paths.historyFile), { recursive: true });
+    await fs.writeFile(
+      store.paths.historyFile,
+      JSON.stringify(
+        {
+          version: RUN_HISTORY_FILE_VERSION,
+          entries: [
+            {
+              id: "legacy",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              request: {
+                prompt: "legacy prompt",
+                environment: "qa.qa",
+                enableRcpMock: false,
+                trustUnknown: true,
+                trustUncertainTeardown: true,
+                keepSandbox: false,
+                reindex: false
+              },
+              result: {
+                fingerprint: "fp-legacy",
+                compatibility: "supported",
+                selectedTest: {
+                  filePath: "/tmp/legacy.spec.ts",
+                  title: "legacy"
+                },
+                environment: "qa.qa",
+                confidence: 0.9,
+                sandboxPath: "/tmp/sandbox-legacy",
+                credentials: {
+                  email: "legacy@example.com",
+                  password: "secret"
+                },
+                warnings: []
+              }
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const loaded = await store.load();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].request.executionMode).toBe("full");
+    expect(loaded[0].request.allowAutoFallback).toBe(true);
+    expect(loaded[0].result.executionMode).toBe("full");
+    expect(loaded[0].result.fallbackTriggered).toBe(false);
   });
 });

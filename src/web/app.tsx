@@ -271,6 +271,8 @@ export const App = () => {
       spec: entry.request.spec,
       test: entry.request.test,
       environment: entry.request.environment,
+      executionMode: entry.request.executionMode,
+      allowAutoFallback: entry.request.allowAutoFallback,
       enableRcpMock: entry.request.enableRcpMock,
       trustUnknown: entry.request.trustUnknown,
       trustUncertainTeardown: entry.request.trustUncertainTeardown,

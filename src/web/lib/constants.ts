@@ -7,8 +7,10 @@ export const DEFAULT_USER_GENERATION_PROMPT = "US account with on-demand contrac
 
 export const DEFAULT_GENERATION_OVERRIDES: Pick<
   UserGenerationRequest,
-  "trustUnknown" | "trustUncertainTeardown"
+  "executionMode" | "allowAutoFallback" | "trustUnknown" | "trustUncertainTeardown"
 > = {
+  executionMode: "fast",
+  allowAutoFallback: true,
   trustUnknown: true,
   trustUncertainTeardown: true
 };

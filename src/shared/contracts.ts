@@ -56,6 +56,8 @@ export type UserGenerationCredentials = {
   [key: string]: string | undefined;
 };
 
+export type ExecutionMode = "fast" | "full";
+
 export type UserGenerationRemovedCall = {
   identifier: string;
   line: number;
@@ -71,6 +73,8 @@ export type UserGenerationResponse = {
     title: string;
   };
   environment: string;
+  executionMode: ExecutionMode;
+  fallbackTriggered: boolean;
   confidence: number;
   removedCalls: UserGenerationRemovedCall[];
   sandboxPath: string;
@@ -96,6 +100,8 @@ export type RunHistoryRequestSnapshot = {
   spec?: string;
   test?: string;
   environment: string;
+  executionMode: ExecutionMode;
+  allowAutoFallback: boolean;
   enableRcpMock: boolean;
   trustUnknown: boolean;
   trustUncertainTeardown: boolean;
@@ -109,6 +115,8 @@ export type RunHistoryResultSnapshot = Pick<
   | "compatibility"
   | "selectedTest"
   | "environment"
+  | "executionMode"
+  | "fallbackTriggered"
   | "confidence"
   | "sandboxPath"
   | "credentials"

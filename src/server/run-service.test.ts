@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TugError } from "../tug/common/errors.js";
 
 const workflowMocks = vi.hoisted(() => ({
   loadRunContext: vi.fn(),
@@ -118,6 +119,104 @@ beforeEach(() => {
 });
 
 describe("executeUserGeneration with optional RCP mock gate", () => {
+  it("defaults to fast execution mode with auto-fallback enabled", async () => {
+    await executeUserGeneration({
+      spec: "/repo/spec.ts",
+      test: "creates user",
+      environment: "qa.qa"
+    });
+
+    expect(workflowMocks.transformIntoSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionMode: "fast"
+      })
+    );
+    expect(workflowMocks.runSandboxedTest).toHaveBeenCalledOnce();
+  });
+
+  it("falls back from fast mode to full mode when credentials are incomplete", async () => {
+    workflowMocks.parseCredentialMarker
+      .mockReturnValueOnce({
+        accountId: "123"
+      })
+      .mockReturnValueOnce({
+        email: "a@b.com",
+        password: "secret"
+      });
+
+    workflowMocks.transformIntoSandbox
+      .mockResolvedValueOnce({
+        transform: {
+          confidence: 0.91,
+          removedCalls: []
+        },
+        sandbox: {
+          path: "/tmp/sandbox-fast",
+          playwrightConfigPath: "/tmp/playwright.fast.config.ts",
+          stdoutLogPath: "/tmp/stdout.fast.log",
+          stderrLogPath: "/tmp/stderr.fast.log"
+        }
+      })
+      .mockResolvedValueOnce({
+        transform: {
+          confidence: 0.92,
+          removedCalls: []
+        },
+        sandbox: {
+          path: "/tmp/sandbox-full",
+          playwrightConfigPath: "/tmp/playwright.full.config.ts",
+          stdoutLogPath: "/tmp/stdout.full.log",
+          stderrLogPath: "/tmp/stderr.full.log"
+        }
+      });
+
+    const result = await executeUserGeneration({
+      spec: "/repo/spec.ts",
+      test: "creates user",
+      environment: "qa.qa"
+    });
+
+    expect(workflowMocks.runSandboxedTest).toHaveBeenCalledTimes(2);
+    expect(workflowMocks.transformIntoSandbox).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ executionMode: "fast" })
+    );
+    expect(workflowMocks.transformIntoSandbox).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ executionMode: "full" })
+    );
+    expect(result.executionMode).toBe("full");
+    expect(result.fallbackTriggered).toBe(true);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        "Fast execution mode fallback triggered: reran in full mode for complete credentials."
+      ])
+    );
+  });
+
+  it("fails fast when auto-fallback is disabled", async () => {
+    workflowMocks.parseCredentialMarker.mockReturnValueOnce({
+      accountId: "123"
+    });
+
+    let captured: unknown;
+    try {
+      await executeUserGeneration({
+        spec: "/repo/spec.ts",
+        test: "creates user",
+        environment: "qa.qa",
+        allowAutoFallback: false
+      });
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toBeInstanceOf(TugError);
+    expect((captured as TugError).reason).toBe("CREDENTIAL_MARKER_MISSING");
+    expect(workflowMocks.runSandboxedTest).toHaveBeenCalledOnce();
+    expect(workflowMocks.transformIntoSandbox).toHaveBeenCalledOnce();
+  });
+
   it("waits for RCP mock workflow before running sandboxed test when enabled", async () => {
     const result = await executeUserGeneration({
       spec: "/repo/spec.ts",

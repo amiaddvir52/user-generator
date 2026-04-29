@@ -9,10 +9,11 @@ import { ensureRequiredEnvironment } from "../tug/validate/env-check.js";
 import { runPreflightGates } from "../tug/validate/gates.js";
 import { runSandboxedTest } from "../tug/execute/runner.js";
 import { parseCredentialMarker } from "../tug/execute/output-parser.js";
+import { hasCompletePrimaryCredentials } from "../tug/execute/credential-completeness.js";
 import { findEntryBySpecAndTitle, getOrBuildIndex, transformIntoSandbox } from "../tug/cli/workflow.js";
-import { isTugError } from "../tug/common/errors.js";
+import { isTugError, TugError } from "../tug/common/errors.js";
 import { enableRcpMockAndWait } from "./rcp-mock.js";
-import type { CredentialPayload, RemovedCallsite } from "../tug/common/types.js";
+import type { CredentialPayload, ExecutionMode, RemovedCallsite } from "../tug/common/types.js";
 
 export type UserGenerationInput = {
   prompt?: string;
@@ -25,6 +26,8 @@ export type UserGenerationInput = {
   keepSandbox?: boolean;
   reindex?: boolean;
   strict?: boolean;
+  executionMode?: ExecutionMode;
+  allowAutoFallback?: boolean;
 };
 
 export type UserGenerationPayload = {
@@ -41,6 +44,8 @@ export type UserGenerationPayload = {
     reasons: string[];
   };
   environment: string;
+  executionMode: ExecutionMode;
+  fallbackTriggered: boolean;
   confidence: number;
   removedCalls: RemovedCallsite[];
   sandboxPath: string;
@@ -63,7 +68,9 @@ export const executeUserGeneration = async (
     trustUncertainTeardown: Boolean(input.trustUncertainTeardown),
     keepSandbox: Boolean(input.keepSandbox),
     reindex: Boolean(input.reindex),
-    strict: Boolean(input.strict)
+    strict: Boolean(input.strict),
+    executionMode: input.executionMode ?? "fast",
+    allowAutoFallback: input.allowAutoFallback ?? true
   });
 
   try {
@@ -89,6 +96,8 @@ const runUserGeneration = async (
   const executionEnv = buildExecutionEnv({
     environment: context.environment
   });
+  const requestedExecutionMode: ExecutionMode = input.executionMode ?? "fast";
+  const allowAutoFallback = input.allowAutoFallback ?? true;
 
   const preflight = await runPreflightGates({
     repoPath: context.repoPath,
@@ -130,18 +139,70 @@ const runUserGeneration = async (
     };
   }
 
-  const pipeline = await transformIntoSandbox({
-    entry,
-    repo: preflight.repo,
-    fingerprint: preflight.fingerprint.fingerprint,
-    compatibility: preflight.compatibility,
-    index,
-    interactiveConfirm: Boolean(input.trustUncertainTeardown),
-    env: executionEnv
-  });
+  const executeAttempt = async ({
+    executionMode,
+    cleanupOnFailure
+  }: {
+    executionMode: ExecutionMode;
+    cleanupOnFailure: boolean;
+  }) => {
+    const pipeline = await transformIntoSandbox({
+      entry,
+      repo: preflight.repo,
+      fingerprint: preflight.fingerprint.fingerprint,
+      compatibility: preflight.compatibility,
+      index,
+      interactiveConfirm: Boolean(input.trustUncertainTeardown),
+      executionMode,
+      env: executionEnv
+    });
 
-  let cleanupAfterSuccess = !input.keepSandbox;
+    let cleanupAfterSuccess = !input.keepSandbox;
+    try {
+      const grepPattern = buildPlaywrightGrepPattern(entry);
+      const execution = await runSandboxedTest({
+        repo: preflight.repo,
+        sandbox: pipeline.sandbox,
+        grepPattern,
+        env: executionEnv
+      });
+      const credentials = parseCredentialMarker(execution.markerLines);
+
+      if (executionMode === "fast" && !hasCompletePrimaryCredentials(credentials)) {
+        throw new TugError(
+          "CREDENTIAL_MARKER_MISSING",
+          "Fast execution mode completed without complete primary credentials (email/password)."
+        );
+      }
+
+      return {
+        executionMode,
+        pipeline,
+        credentials
+      };
+    } catch (error) {
+      if (cleanupOnFailure) {
+        cleanupAfterSuccess = true;
+      } else {
+        cleanupAfterSuccess = false;
+      }
+      throw error;
+    } finally {
+      if (cleanupAfterSuccess) {
+        await cleanupSandbox(pipeline.sandbox);
+      }
+    }
+  };
+
+  let fallbackTriggered = false;
+  let resolvedExecutionMode: ExecutionMode = requestedExecutionMode;
+  let fallbackWarning: string | undefined;
   let rcpMockRunUrl: string | undefined;
+  type ExecutionAttemptResult = {
+    executionMode: ExecutionMode;
+    pipeline: Awaited<ReturnType<typeof transformIntoSandbox>>;
+    credentials: CredentialPayload;
+  };
 
   try {
     if (input.enableRcpMock) {
@@ -153,17 +214,41 @@ const runUserGeneration = async (
       });
     }
 
-    const grepPattern = buildPlaywrightGrepPattern(entry);
-    const execution = await runSandboxedTest({
-      repo: preflight.repo,
-      sandbox: pipeline.sandbox,
-      grepPattern,
-      env: executionEnv
-    });
+    let attemptResult: ExecutionAttemptResult;
+    if (requestedExecutionMode === "fast") {
+      try {
+        attemptResult = await executeAttempt({
+          executionMode: "fast",
+          cleanupOnFailure: allowAutoFallback
+        });
+      } catch (error) {
+        const shouldFallback =
+          allowAutoFallback &&
+          isTugError(error) &&
+          error.reason === "CREDENTIAL_MARKER_MISSING";
+        if (!shouldFallback) {
+          throw error;
+        }
 
-    const credentials = parseCredentialMarker(execution.markerLines);
+        fallbackTriggered = true;
+        resolvedExecutionMode = "full";
+        fallbackWarning = "Fast execution mode fallback triggered: reran in full mode for complete credentials.";
+        attemptResult = await executeAttempt({
+          executionMode: "full",
+          cleanupOnFailure: false
+        });
+      }
+    } else {
+      attemptResult = await executeAttempt({
+        executionMode: "full",
+        cleanupOnFailure: false
+      });
+    }
 
     const warningLines = [...preflight.warnings];
+    if (fallbackWarning) {
+      warningLines.push(fallbackWarning);
+    }
     if (rcpMockRunUrl) {
       warningLines.push(`RCP mock workflow run: ${rcpMockRunUrl}`);
     }
@@ -175,9 +260,11 @@ const runUserGeneration = async (
 
     tugLog("run.done", {
       fingerprint: preflight.fingerprint.fingerprint,
-      sandboxPath: pipeline.sandbox.path,
+      sandboxPath: attemptResult.pipeline.sandbox.path,
       filePath: entry.filePath,
-      testTitle: entry.testTitle
+      testTitle: entry.testTitle,
+      executionMode: resolvedExecutionMode,
+      fallbackTriggered
     });
 
     return {
@@ -190,18 +277,15 @@ const runUserGeneration = async (
       },
       selection: selectionMeta,
       environment: context.environment as string,
-      confidence: pipeline.transform.confidence,
-      removedCalls: pipeline.transform.removedCalls,
-      sandboxPath: pipeline.sandbox.path,
-      credentials,
+      executionMode: resolvedExecutionMode,
+      fallbackTriggered,
+      confidence: attemptResult.pipeline.transform.confidence,
+      removedCalls: attemptResult.pipeline.transform.removedCalls,
+      sandboxPath: attemptResult.pipeline.sandbox.path,
+      credentials: attemptResult.credentials,
       warnings
     };
   } catch (error) {
-    cleanupAfterSuccess = false;
     throw error;
-  } finally {
-    if (cleanupAfterSuccess) {
-      await cleanupSandbox(pipeline.sandbox);
-    }
   }
 };

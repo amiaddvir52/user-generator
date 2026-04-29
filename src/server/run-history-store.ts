@@ -21,6 +21,8 @@ const RunHistoryEntrySchema = z.object({
     spec: z.string().min(1).optional(),
     test: z.string().min(1).optional(),
     environment: z.string().min(1),
+    executionMode: z.enum(["fast", "full"]).default("full"),
+    allowAutoFallback: z.boolean().default(true),
     enableRcpMock: z.boolean(),
     trustUnknown: z.boolean(),
     trustUncertainTeardown: z.boolean(),
@@ -35,6 +37,8 @@ const RunHistoryEntrySchema = z.object({
       title: z.string().min(1)
     }),
     environment: z.string().min(1),
+    executionMode: z.enum(["fast", "full"]).default("full"),
+    fallbackTriggered: z.boolean().default(false),
     confidence: z.number(),
     sandboxPath: z.string().min(1),
     credentials: z.record(z.string(), z.string().optional()),

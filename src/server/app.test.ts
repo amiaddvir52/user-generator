@@ -560,6 +560,8 @@ describe("user generation API", () => {
       compatibility: "supported",
       selectedTest: { filePath: "/tmp/spec.ts", title: "creates user" },
       environment: "qa.qa",
+      executionMode: "fast",
+      fallbackTriggered: false,
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
@@ -585,6 +587,8 @@ describe("user generation API", () => {
       expect.objectContaining({
         prompt: "US account with on-demand contract",
         environment: "qa.qa",
+        executionMode: "fast",
+        allowAutoFallback: true,
         trustUnknown: true,
         trustUncertainTeardown: true
       })
@@ -602,6 +606,8 @@ describe("user generation API", () => {
           request: {
             prompt: "US account with on-demand contract",
             environment: "qa.qa",
+            executionMode: "fast",
+            allowAutoFallback: true,
             enableRcpMock: false,
             trustUnknown: true,
             trustUncertainTeardown: true,
@@ -609,6 +615,8 @@ describe("user generation API", () => {
             reindex: false
           },
           result: {
+            executionMode: "fast",
+            fallbackTriggered: false,
             selectedTest: { title: "creates user" },
             credentials: { email: "a@b.com", password: "secret" }
           }
@@ -704,6 +712,8 @@ describe("user generation API", () => {
       compatibility: "supported",
       selectedTest: { filePath: "/tmp/spec.ts", title: "creates user" },
       environment: "qa.qa",
+      executionMode: "fast",
+      fallbackTriggered: false,
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
@@ -741,6 +751,8 @@ describe("user generation API", () => {
       compatibility: "supported",
       selectedTest: { filePath: "/tmp/spec.ts", title: "creates user" },
       environment: "qa.qa",
+      executionMode: "fast",
+      fallbackTriggered: false,
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
@@ -814,6 +826,8 @@ describe("user generation API", () => {
       compatibility: "supported" as const,
       selectedTest: { filePath: "/tmp/spec.ts", title: `creates ${prompt}` },
       environment: "qa.qa",
+      executionMode: "fast" as const,
+      fallbackTriggered: false,
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
@@ -856,6 +870,8 @@ describe("user generation API", () => {
       compatibility: "supported",
       selectedTest: { filePath: "/tmp/spec.ts", title: "creates user" },
       environment: "qa.qa",
+      executionMode: "fast",
+      fallbackTriggered: false,
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",

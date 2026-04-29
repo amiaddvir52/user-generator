@@ -12,8 +12,10 @@ import { ensureRequiredEnvironment } from "../../validate/env-check.js";
 import { runPreflightGates } from "../../validate/gates.js";
 import { runSandboxedTest } from "../../execute/runner.js";
 import { parseCredentialMarker } from "../../execute/output-parser.js";
+import { hasCompletePrimaryCredentials } from "../../execute/credential-completeness.js";
 import { chooseFromCandidates, confirmPrompt } from "../prompt.js";
 import { findEntryBySpecAndTitle, getOrBuildIndex, renderRemovedCallTable, transformIntoSandbox } from "../workflow.js";
+import type { CredentialPayload, ExecutionMode } from "../../common/types.js";
 
 export const runRunCommand = async (
   prompt: string | undefined,
@@ -30,6 +32,8 @@ export const runRunCommand = async (
     exportEnv?: boolean;
     json?: boolean;
     environment?: string;
+    executionMode?: ExecutionMode;
+    autoFallback?: boolean;
   }
 ) => {
   const context = await loadRunContext({
@@ -115,125 +119,224 @@ export const runRunCommand = async (
     }
   }
 
-  let cleanupAfterSuccess = !options.keepSandbox;
-  const pipeline = await transformIntoSandbox({
-    entry,
-    repo: preflight.repo,
-    fingerprint: preflight.fingerprint.fingerprint,
-    compatibility: preflight.compatibility,
-    index,
-    interactiveConfirm: !options.yes,
-    env: executionEnv
-  });
-
-  try {
-    const grepPattern = buildPlaywrightGrepPattern(entry);
-    const resolvedCommand = formatCommandForDisplay(
-      buildPnpmCommand(preflight.repo, [
-        "--filter",
-        preflight.repo.packageName,
-        "exec",
-        "playwright",
-        "test",
-        "--config",
-        pipeline.sandbox.playwrightConfigPath,
-        "--grep",
-        grepPattern,
-        "--workers=1"
-      ])
+  const executionModeOption = options.executionMode?.trim().toLowerCase();
+  if (
+    executionModeOption &&
+    executionModeOption !== "full" &&
+    executionModeOption !== "fast"
+  ) {
+    throw new TugError(
+      "CONFIG_INCOMPLETE",
+      "--execution-mode must be either \"full\" or \"fast\"."
     );
+  }
 
-    const preview = [
-      `Selected test: ${entry.testTitle}`,
-      `Source: ${entry.filePath}`,
-      `Confidence: ${pipeline.transform.confidence.toFixed(2)}`,
-      renderRemovedCallTable(pipeline.transform),
-      "",
-      "Resolved command:",
-      resolvedCommand
-    ].join("\n");
+  const requestedExecutionMode: ExecutionMode = (executionModeOption as ExecutionMode | undefined) ?? "full";
+  const allowAutoFallback = options.autoFallback ?? true;
+  type ExecutionAttemptResult = {
+    pipeline: Awaited<ReturnType<typeof transformIntoSandbox>>;
+    credentials: CredentialPayload;
+    executionMode: ExecutionMode;
+  };
 
-    if (!options.json) {
-      process.stdout.write(`${preview}\n\n`);
-      process.stdout.write(`${pipeline.diff}\n`);
-    }
-
-    if (!options.yes) {
-      const confirmed = await confirmPrompt({
-        message: "Proceed with execution?",
-        defaultNo: true
-      });
-      if (!confirmed) {
-        throw new TugError("EXECUTION_FAILED", "Execution canceled by user.");
-      }
-    }
-
-    const execution = await runSandboxedTest({
+  const executeAttempt = async ({
+    executionMode,
+    showPreviewAndPrompt,
+    cleanupOnFailure
+  }: {
+    executionMode: ExecutionMode;
+    showPreviewAndPrompt: boolean;
+    cleanupOnFailure: boolean;
+  }) => {
+    const pipeline = await transformIntoSandbox({
+      entry,
       repo: preflight.repo,
-      sandbox: pipeline.sandbox,
-      grepPattern,
+      fingerprint: preflight.fingerprint.fingerprint,
+      compatibility: preflight.compatibility,
+      index,
+      interactiveConfirm: !options.yes,
+      executionMode,
       env: executionEnv
     });
 
-    const credentials = parseCredentialMarker(execution.markerLines);
+    let cleanupAfterSuccess = !options.keepSandbox;
+    try {
+      const grepPattern = buildPlaywrightGrepPattern(entry);
+      const resolvedCommand = formatCommandForDisplay(
+        buildPnpmCommand(preflight.repo, [
+          "--filter",
+          preflight.repo.packageName,
+          "exec",
+          "playwright",
+          "test",
+          "--config",
+          pipeline.sandbox.playwrightConfigPath,
+          "--grep",
+          grepPattern,
+          "--workers=1"
+        ])
+      );
 
-    const payload = {
-      ok: true,
-      fingerprint: preflight.fingerprint.fingerprint,
-      compatibility: preflight.compatibility.status,
-      selectedTest: {
-        filePath: entry.filePath,
-        title: entry.testTitle
-      },
-      selection: selectionMeta,
-      environment: context.environment,
-      provider: context.provider,
-      providerBackend: context.providerBackend,
-      confidence: pipeline.transform.confidence,
-      removedCalls: pipeline.transform.removedCalls,
-      sandboxPath: pipeline.sandbox.path,
-      credentials,
-      warnings: preflight.warnings
-    };
+      if (showPreviewAndPrompt) {
+        const preview = [
+          `Selected test: ${entry.testTitle}`,
+          `Source: ${entry.filePath}`,
+          `Execution mode: ${executionMode}`,
+          `Confidence: ${pipeline.transform.confidence.toFixed(2)}`,
+          renderRemovedCallTable(pipeline.transform),
+          "",
+          "Resolved command:",
+          resolvedCommand
+        ].join("\n");
 
-    if (options.exportEnv) {
-      const envLines = Object.entries(credentials)
-        .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
-        .map(
-          ([key, value]) =>
-            `export TUG_${key.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}=${quoteForShellValue(value)}`
-        );
+        if (!options.json) {
+          process.stdout.write(`${preview}\n\n`);
+          process.stdout.write(`${pipeline.diff}\n`);
+        }
 
-      if (!options.json && envLines.length > 0) {
-        process.stdout.write(`${envLines.join("\n")}\n`);
+        if (!options.yes) {
+          const confirmed = await confirmPrompt({
+            message: "Proceed with execution?",
+            defaultNo: true
+          });
+          if (!confirmed) {
+            throw new TugError("EXECUTION_FAILED", "Execution canceled by user.");
+          }
+        }
       }
 
-      (payload as Record<string, unknown>).exportEnv = envLines;
-    }
+      const execution = await runSandboxedTest({
+        repo: preflight.repo,
+        sandbox: pipeline.sandbox,
+        grepPattern,
+        env: executionEnv
+      });
 
-    if (options.output) {
-      await writeJsonFile(options.output, payload);
-    }
+      const credentials = parseCredentialMarker(execution.markerLines);
+      if (executionMode === "fast" && !hasCompletePrimaryCredentials(credentials)) {
+        throw new TugError(
+          "CREDENTIAL_MARKER_MISSING",
+          "Fast execution mode completed without complete primary credentials (email/password)."
+        );
+      }
 
-    printResult({
-      json: Boolean(options.json),
-      payload,
-      text: [
-        `Execution succeeded for ${entry.testTitle}`,
-        `Environment: ${context.environment}`,
-        `Sandbox: ${pipeline.sandbox.path}`,
-        `Credentials: ${JSON.stringify(credentials)}`,
-        options.output ? `Wrote output to ${options.output}` : ""
-      ]
-        .filter(Boolean)
-        .join("\n")
+      return {
+        pipeline,
+        credentials,
+        executionMode
+      };
+    } catch (error) {
+      if (cleanupOnFailure) {
+        cleanupAfterSuccess = true;
+      } else {
+        cleanupAfterSuccess = false;
+      }
+      throw error;
+    } finally {
+      if (cleanupAfterSuccess) {
+        await cleanupSandbox(pipeline.sandbox);
+      }
+    }
+  };
+
+  let fallbackTriggered = false;
+  let fallbackWarning: string | undefined;
+  let result: ExecutionAttemptResult;
+
+  if (requestedExecutionMode === "fast") {
+    try {
+      result = await executeAttempt({
+        executionMode: "fast",
+        showPreviewAndPrompt: true,
+        cleanupOnFailure: allowAutoFallback
+      });
+    } catch (error) {
+      const shouldFallback =
+        allowAutoFallback &&
+        error instanceof TugError &&
+        error.reason === "CREDENTIAL_MARKER_MISSING";
+      if (!shouldFallback) {
+        throw error;
+      }
+
+      fallbackTriggered = true;
+      fallbackWarning = "Fast execution mode fallback triggered: reran in full mode for complete credentials.";
+      if (!options.json) {
+        process.stderr.write(`${fallbackWarning}\n`);
+      }
+
+      result = await executeAttempt({
+        executionMode: "full",
+        showPreviewAndPrompt: false,
+        cleanupOnFailure: false
+      });
+    }
+  } else {
+    result = await executeAttempt({
+      executionMode: "full",
+      showPreviewAndPrompt: true,
+      cleanupOnFailure: false
     });
-  } catch (error) {
-    cleanupAfterSuccess = false;
-    throw error;
-  } finally {
-    if (cleanupAfterSuccess) {
-      await cleanupSandbox(pipeline.sandbox);
-    }
   }
+
+  const warnings = [...preflight.warnings];
+  if (fallbackWarning) {
+    warnings.push(fallbackWarning);
+  }
+
+  const payload = {
+    ok: true,
+    fingerprint: preflight.fingerprint.fingerprint,
+    compatibility: preflight.compatibility.status,
+    selectedTest: {
+      filePath: entry.filePath,
+      title: entry.testTitle
+    },
+    selection: selectionMeta,
+    environment: context.environment,
+    executionMode: result.executionMode,
+    fallbackTriggered,
+    provider: context.provider,
+    providerBackend: context.providerBackend,
+    confidence: result.pipeline.transform.confidence,
+    removedCalls: result.pipeline.transform.removedCalls,
+    sandboxPath: result.pipeline.sandbox.path,
+    credentials: result.credentials,
+    warnings
+  };
+
+  if (options.exportEnv) {
+    const envLines = Object.entries(result.credentials)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
+      .map(
+        ([key, value]) =>
+          `export TUG_${key.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}=${quoteForShellValue(value)}`
+      );
+
+    if (!options.json && envLines.length > 0) {
+      process.stdout.write(`${envLines.join("\n")}\n`);
+    }
+
+    (payload as Record<string, unknown>).exportEnv = envLines;
+  }
+
+  if (options.output) {
+    await writeJsonFile(options.output, payload);
+  }
+
+  printResult({
+    json: Boolean(options.json),
+    payload,
+    text: [
+      `Execution succeeded for ${entry.testTitle}`,
+      `Environment: ${context.environment}`,
+      `Execution mode: ${result.executionMode}`,
+      `Fallback triggered: ${fallbackTriggered ? "yes" : "no"}`,
+      `Sandbox: ${result.pipeline.sandbox.path}`,
+      `Credentials: ${JSON.stringify(result.credentials)}`,
+      options.output ? `Wrote output to ${options.output}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n")
+  });
 };
