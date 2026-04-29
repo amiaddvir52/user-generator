@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 
 import type { RepoHandle, SandboxHandle } from "../common/types.js";
 import { TugError } from "../common/errors.js";
-import { buildPnpmCommand } from "../common/package-manager.js";
+import { extractMissingBareModule, formatMissingModuleDetails } from "../common/missing-module.js";
+import { buildPnpmCommand, formatCommandForDisplay } from "../common/package-manager.js";
 import { CREDENTIAL_MARKER } from "../transform/credential-probe.js";
 import { appendLog, flushBufferedLines, readBufferedLines } from "./stdio.js";
 
@@ -114,6 +115,25 @@ export const runSandboxedTest = async ({
       });
 
       if ((exitCode ?? 1) !== 0) {
+        const missingModule = extractMissingBareModule([stderr, stdout].join("\n"));
+        if (missingModule) {
+          reject(
+            new TugError(
+              "EXECUTION_FAILED",
+              `Playwright execution failed because automation dependency "${missingModule.moduleName}" is missing.`,
+              formatMissingModuleDetails({
+                diagnostic: missingModule,
+                repoPath: repo.absPath,
+                installCommand: formatCommandForDisplay(
+                  buildPnpmCommand(repo, ["install", "--frozen-lockfile"])
+                ),
+                installWasRetried: false
+              })
+            )
+          );
+          return;
+        }
+
         reject(
           new TugError(
             "EXECUTION_FAILED",

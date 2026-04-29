@@ -155,11 +155,11 @@ const readInstalledPlaywrightVersion = async (repo: RepoHandle) => {
   return parsed.version ?? "unknown";
 };
 
-const installAutomationDependencies = async (repo: RepoHandle) => {
+export const installAutomationDependencies = async (repo: RepoHandle) => {
   if (!repo.lockfilePath || path.basename(repo.lockfilePath) !== "pnpm-lock.yaml") {
     throw new TugError(
       "PLAYWRIGHT_INCOMPATIBLE",
-      "Playwright is not installed and the automation repo does not have a supported pnpm-lock.yaml for automatic install.",
+      "Automation repo dependencies are not fully installed and the repo does not have a supported pnpm-lock.yaml for automatic install.",
       [
         "Run the automation repo package install once, or add/commit pnpm-lock.yaml so TUG can restore dependencies automatically."
       ]

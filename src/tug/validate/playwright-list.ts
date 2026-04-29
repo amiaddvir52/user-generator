@@ -4,8 +4,10 @@ import { promises as fs } from "node:fs";
 import type { RepoHandle } from "../common/types.js";
 import { TugError } from "../common/errors.js";
 import { tugLog } from "../common/logger.js";
-import { buildPnpmCommand } from "../common/package-manager.js";
+import { extractMissingBareModule, formatMissingModuleDetails } from "../common/missing-module.js";
+import { buildPnpmCommand, formatCommandForDisplay } from "../common/package-manager.js";
 import { runShellCommand, type ShellResult } from "../common/shell.js";
+import { installAutomationDependencies } from "../repo/validator.js";
 
 export type PlaywrightListResult = {
   rawOutput: string;
@@ -99,6 +101,40 @@ const failWith = (
   throw new TugError("VALIDATION_FAILED", message, details);
 };
 
+const combinedOutput = (result: ShellResult) =>
+  [result.stderr, result.stdout].filter((segment) => segment.trim().length > 0).join("\n");
+
+const buildInstallCommandDisplay = (repo: RepoHandle) =>
+  formatCommandForDisplay(buildPnpmCommand(repo, ["install", "--frozen-lockfile"]));
+
+const failWithMissingModule = (
+  repo: RepoHandle,
+  payload: { phase: string; command: string[]; result: ShellResult; tests: string[]; configPath?: string; expectedTitle?: string },
+  installWasRetried: boolean,
+  installErrorDetails: string[] = []
+): never => {
+  const diagnostic = extractMissingBareModule(combinedOutput(payload.result));
+  if (!diagnostic) {
+    return failWith(
+      "Playwright --list preflight failed.",
+      [payload.result.stderr.trim() || payload.result.stdout.trim() || payload.command.join(" ")],
+      payload
+    );
+  }
+
+  return failWith(
+    `Playwright --list preflight failed because automation dependency "${diagnostic.moduleName}" is missing.`,
+    formatMissingModuleDetails({
+      diagnostic,
+      repoPath: repo.absPath,
+      installCommand: buildInstallCommandDisplay(repo),
+      installWasRetried,
+      installErrorDetails
+    }),
+    payload
+  );
+};
+
 const matchesExpectedTitle = (parsed: string, expectedTitle: string) =>
   parsed === expectedTitle || parsed.endsWith(` › ${expectedTitle}`);
 
@@ -117,13 +153,44 @@ export const runPlaywrightList = async ({
     await dumpSandboxArtifacts(configPath);
   }
 
-  const { command, result, tests } = await runOneList(repo, configPath, "list", env);
+  let { command, result, tests } = await runOneList(repo, configPath, "list", env);
   if (result.exitCode !== 0) {
-    failWith(
-      "Playwright --list preflight failed.",
-      [result.stderr.trim() || result.stdout.trim() || command.join(" ")],
-      { phase: "list", command, result, tests, configPath, expectedTitle }
-    );
+    const missingModule = extractMissingBareModule(combinedOutput(result));
+    if (!missingModule) {
+      return failWith(
+        "Playwright --list preflight failed.",
+        [result.stderr.trim() || result.stdout.trim() || command.join(" ")],
+        { phase: "list", command, result, tests, configPath, expectedTitle }
+      );
+    }
+
+    tugLog("playwright.list.missing_module", {
+      moduleName: missingModule.moduleName,
+      requireStack: missingModule.requireStack
+    });
+
+    try {
+      await installAutomationDependencies(repo);
+    } catch (error) {
+      const installError =
+        error instanceof TugError ? [error.message, ...error.details] : [(error as Error).message];
+      failWithMissingModule(
+        repo,
+        { phase: "list", command, result, tests, configPath, expectedTitle },
+        true,
+        installError
+      );
+    }
+
+    ({ command, result, tests } = await runOneList(repo, configPath, "list-after-install", env));
+
+    if (result.exitCode !== 0) {
+      failWithMissingModule(
+        repo,
+        { phase: "list-after-install", command, result, tests, configPath, expectedTitle },
+        true
+      );
+    }
   }
 
   if (!expectedTitle) {
