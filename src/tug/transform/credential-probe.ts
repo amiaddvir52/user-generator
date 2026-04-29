@@ -1,0 +1,32 @@
+export const CREDENTIAL_MARKER = "__TUG_CRED__";
+
+export const credentialProbeStatements = () => [
+  "const __tugNormalize = (value: unknown): string | undefined => {",
+  "  if (Array.isArray(value)) {",
+  "    const first = value.find((entry) => entry != null && String(entry).length > 0);",
+  "    return first == null ? undefined : String(first);",
+  "  }",
+  "  if (value == null) {",
+  "    return undefined;",
+  "  }",
+  "  const normalized = String(value);",
+  "  return normalized.length > 0 ? normalized : undefined;",
+  "};",
+  "const __tugCred = {",
+  "  // @ts-ignore - `filler` is an optional local test fixture in target repos.",
+  "  email: typeof filler !== 'undefined' ? __tugNormalize(filler?.employee?.emailAddress) : undefined,",
+  "  // @ts-ignore - `filler` is an optional local test fixture in target repos.",
+  "  password: typeof filler !== 'undefined' ? __tugNormalize(filler?.employee?.password) : undefined,",
+  "  // @ts-ignore - `accountId` and `filler` are optional locals in target repos.",
+  "  accountId: typeof accountId !== 'undefined' ? __tugNormalize(accountId) : (typeof filler !== 'undefined' ? __tugNormalize(filler?.accountId) : undefined),",
+  "  // @ts-ignore - `filler` is an optional local test fixture in target repos.",
+  "  subscriptionId: typeof filler !== 'undefined' ? __tugNormalize(filler?.subscriptionId) : undefined,",
+  "  // @ts-ignore - `filler` is an optional local test fixture in target repos.",
+  "  databaseId: typeof filler !== 'undefined' ? __tugNormalize(filler?.databaseId) : undefined,",
+  "  // @ts-ignore - `marketplaceId` and `filler` are optional locals in target repos.",
+  "  marketplaceId: typeof marketplaceId !== 'undefined' ? __tugNormalize(marketplaceId) : (typeof filler !== 'undefined' ? __tugNormalize(filler?.marketplaceId) : undefined),",
+  "  // @ts-ignore - `smAccountId`, `accountId`, and `filler` are optional locals in target repos.",
+  "  smAccountId: typeof smAccountId !== 'undefined' ? __tugNormalize(smAccountId) : (typeof accountId !== 'undefined' ? __tugNormalize(accountId) : (typeof filler !== 'undefined' ? __tugNormalize(filler?.accountId) : undefined))",
+  "};",
+  `console.log('${CREDENTIAL_MARKER}' + JSON.stringify(__tugCred));`
+];
