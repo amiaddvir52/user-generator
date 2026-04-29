@@ -1,15 +1,94 @@
 import type { Intent, RankedCandidate, SpecIndexEntry } from "../common/types.js";
+import { hasStandaloneKeyword } from "../common/text-signals.js";
 
-const toSearchText = (entry: SpecIndexEntry) =>
-  `${entry.filePath} ${entry.describeTitles.join(" ")} ${entry.testTitle}`.toLowerCase();
+type KeywordLocation = "title" | "describe" | "path" | "tag-exact" | "tag-contains";
+type IntentKeywordClass = "action" | "context";
 
-const includesKeyword = (entry: SpecIndexEntry, keyword: string) => {
-  const haystack = toSearchText(entry);
-  if (haystack.includes(keyword)) {
-    return true;
+const LOCATION_WEIGHTS: Record<KeywordLocation, number> = {
+  title: 1,
+  describe: 0.75,
+  path: 0.45,
+  "tag-exact": 0.8,
+  "tag-contains": 0.6
+};
+
+const LOCATION_LABELS: Record<KeywordLocation, string> = {
+  title: "title",
+  describe: "describe",
+  path: "path",
+  "tag-exact": "tag exact",
+  "tag-contains": "tag contains"
+};
+
+const BASE_KEYWORD_SCORE = 0.14;
+const CLOSE_SCORE_COST_TIEBREAK_WINDOW = 0.08;
+const INTENT_MULTIPLIER: Record<IntentKeywordClass, number> = {
+  action: 1.6,
+  context: 1
+};
+
+const ACTION_KEYWORDS = new Set([
+  "activate",
+  "cancel",
+  "convert",
+  "create",
+  "deactivate",
+  "downgrade",
+  "enroll",
+  "migrate",
+  "provision",
+  "renew",
+  "resubscribe",
+  "signup",
+  "subscribe",
+  "terminate",
+  "unsubscribe",
+  "upgrade"
+]);
+
+const normalizeKeyword = (keyword: string) => keyword.toLowerCase().replace(/^@/, "").trim();
+
+const resolveIntentKeywordClass = (keyword: string): IntentKeywordClass =>
+  ACTION_KEYWORDS.has(normalizeKeyword(keyword)) ? "action" : "context";
+
+const resolveKeywordLocation = (entry: SpecIndexEntry, keyword: string): KeywordLocation | undefined => {
+  const normalizedKeyword = normalizeKeyword(keyword);
+  if (!normalizedKeyword) {
+    return undefined;
   }
 
-  return entry.tags.some((tag) => tag.toLowerCase() === keyword || tag.toLowerCase().includes(keyword));
+  const tagExactMatch = entry.tags.some((tag) => {
+    const normalizedTag = tag.toLowerCase();
+    return normalizedTag === normalizedKeyword || normalizedTag === `@${normalizedKeyword}`;
+  });
+  const tagContainsMatch = !tagExactMatch && entry.tags.some((tag) => tag.toLowerCase().includes(normalizedKeyword));
+  const titleMatch = hasStandaloneKeyword(entry.testTitle, normalizedKeyword);
+  const describeMatch = entry.describeTitles.some((title) => hasStandaloneKeyword(title, normalizedKeyword));
+  const pathMatch = hasStandaloneKeyword(entry.filePath, normalizedKeyword, {
+    ignoreSlashDisjunction: false
+  });
+
+  const hits: KeywordLocation[] = [];
+  if (titleMatch) {
+    hits.push("title");
+  }
+  if (describeMatch) {
+    hits.push("describe");
+  }
+  if (pathMatch) {
+    hits.push("path");
+  }
+  if (tagExactMatch) {
+    hits.push("tag-exact");
+  } else if (tagContainsMatch) {
+    hits.push("tag-contains");
+  }
+
+  if (hits.length === 0) {
+    return undefined;
+  }
+
+  return hits.sort((left, right) => LOCATION_WEIGHTS[right] - LOCATION_WEIGHTS[left])[0];
 };
 
 const estimateExecutionCost = (entry: SpecIndexEntry) => {
@@ -23,19 +102,17 @@ export const scoreEntry = (entry: SpecIndexEntry, intent: Intent): RankedCandida
   const reasons: string[] = [];
   let score = 0;
 
-  const keywordHits = intent.keywords.filter((keyword) => includesKeyword(entry, keyword));
-  if (keywordHits.length > 0) {
-    score += keywordHits.length * 0.22;
-    reasons.push(`keyword match (${keywordHits.join(", ")})`);
-  }
-
-  if (entry.tags.length > 0) {
-    const tagMatches = entry.tags.filter((tag) => intent.keywords.includes(tag.replace(/^@/, "")));
-    if (tagMatches.length > 0) {
-      score += tagMatches.length * 0.15;
-      reasons.push(`tag match (${tagMatches.join(", ")})`);
+  intent.keywords.forEach((keyword) => {
+    const location = resolveKeywordLocation(entry, keyword);
+    if (!location) {
+      return;
     }
-  }
+
+    const intentClass = resolveIntentKeywordClass(keyword);
+    const keywordScore = BASE_KEYWORD_SCORE * LOCATION_WEIGHTS[location] * INTENT_MULTIPLIER[intentClass];
+    score += keywordScore;
+    reasons.push(`keyword "${keyword}" (${intentClass}, ${LOCATION_LABELS[location]})`);
+  });
 
   if (intent.hints.payerLocation && entry.scoreHints.payerLocation === intent.hints.payerLocation) {
     score += 0.2;
@@ -53,7 +130,7 @@ export const scoreEntry = (entry: SpecIndexEntry, intent: Intent): RankedCandida
   }
 
   if (entry.testTitle.toLowerCase().includes(intent.rawPrompt.toLowerCase())) {
-    score += 0.35;
+    score += 0.1;
     reasons.push("exact prompt snippet match");
   }
 
@@ -72,11 +149,19 @@ export const scoreEntry = (entry: SpecIndexEntry, intent: Intent): RankedCandida
 };
 
 export const rankCandidates = (entries: SpecIndexEntry[], intent: Intent): RankedCandidate[] =>
-  entries
+  {
+    const ranked = entries
     .map((entry) => scoreEntry(entry, intent))
     .sort((left, right) => {
-      if (left.score !== right.score) {
-        return right.score - left.score;
+      const scoreDelta = right.score - left.score;
+      if (scoreDelta !== 0) {
+        if (Math.abs(scoreDelta) <= CLOSE_SCORE_COST_TIEBREAK_WINDOW) {
+          const closeCostDelta = estimateExecutionCost(left.entry) - estimateExecutionCost(right.entry);
+          if (closeCostDelta !== 0) {
+            return closeCostDelta;
+          }
+        }
+        return scoreDelta;
       }
 
       const costDelta = estimateExecutionCost(left.entry) - estimateExecutionCost(right.entry);
@@ -90,3 +175,16 @@ export const rankCandidates = (entries: SpecIndexEntry[], intent: Intent): Ranke
 
       return left.entry.testTitle.localeCompare(right.entry.testTitle);
     });
+
+    if (ranked.length >= 2) {
+      const [top, second] = ranked;
+      if (Math.abs(top.score - second.score) <= CLOSE_SCORE_COST_TIEBREAK_WINDOW) {
+        const costDelta = estimateExecutionCost(top.entry) - estimateExecutionCost(second.entry);
+        if (costDelta < 0) {
+          top.reasons.push("cost-aware tie-break winner (close-score window)");
+        }
+      }
+    }
+
+    return ranked;
+  };

@@ -6,6 +6,7 @@ import { extractMissingBareModule, formatMissingModuleDetails } from "../common/
 import { buildPnpmCommand, formatCommandForDisplay } from "../common/package-manager.js";
 import { CREDENTIAL_MARKER } from "../transform/credential-probe.js";
 import { appendLog, flushBufferedLines, readBufferedLines } from "./stdio.js";
+import { parseCredentialExecution } from "./output-parser.js";
 
 export type ExecutionResult = {
   command: string[];
@@ -115,30 +116,50 @@ export const runSandboxedTest = async ({
       });
 
       if ((exitCode ?? 1) !== 0) {
+        const partialWarningFromMarkers = (() => {
+          if (markerLines.length === 0) {
+            return undefined;
+          }
+
+          try {
+            return parseCredentialExecution(markerLines).warning;
+          } catch {
+            return "Warning: Credential marker captured but provisioned state is partial/incomplete.";
+          }
+        })();
+
         const missingModule = extractMissingBareModule([stderr, stdout].join("\n"));
         if (missingModule) {
           reject(
             new TugError(
               "EXECUTION_FAILED",
               `Playwright execution failed because automation dependency "${missingModule.moduleName}" is missing.`,
-              formatMissingModuleDetails({
-                diagnostic: missingModule,
-                repoPath: repo.absPath,
-                installCommand: formatCommandForDisplay(
-                  buildPnpmCommand(repo, ["install", "--frozen-lockfile"])
-                ),
-                installWasRetried: false
-              })
+              [
+                ...formatMissingModuleDetails({
+                  diagnostic: missingModule,
+                  repoPath: repo.absPath,
+                  installCommand: formatCommandForDisplay(
+                    buildPnpmCommand(repo, ["install", "--frozen-lockfile"])
+                  ),
+                  installWasRetried: false
+                }),
+                ...(partialWarningFromMarkers ? [partialWarningFromMarkers] : [])
+              ]
             )
           );
           return;
+        }
+
+        const failureDetails = [stderr.trim() || stdout.trim()].filter(Boolean);
+        if (partialWarningFromMarkers) {
+          failureDetails.push(partialWarningFromMarkers);
         }
 
         reject(
           new TugError(
             "EXECUTION_FAILED",
             `Playwright exited with code ${exitCode ?? 1}.`,
-            [stderr.trim() || stdout.trim()]
+            failureDetails
           )
         );
         return;

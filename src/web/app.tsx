@@ -336,7 +336,9 @@ export const App = () => {
     }
   };
 
-  const exportEnvLines = generationResult ? toExportEnvLines(generationResult.credentials) : [];
+  const exportEnvLines = generationResult?.accounts.target?.usable
+    ? toExportEnvLines(generationResult.accounts.target.fields)
+    : [];
 
   const renderWorkspace = () => {
     if (activeSection === "setup") {

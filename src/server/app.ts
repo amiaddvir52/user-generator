@@ -610,7 +610,10 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
         confidence: payload.confidence,
         removedCalls: payload.removedCalls,
         sandboxPath: payload.sandboxPath,
-        credentials: payload.credentials,
+        accounts: payload.accounts,
+        runState: payload.runState,
+        timing: payload.timing,
+        fastPathTriggered: payload.fastPathTriggered,
         warnings: payload.warnings
       };
 
@@ -639,7 +642,10 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
           fallbackTriggered: response.fallbackTriggered,
           confidence: response.confidence,
           sandboxPath: response.sandboxPath,
-          credentials: response.credentials,
+          accounts: response.accounts,
+          runState: response.runState,
+          timing: response.timing,
+          fastPathTriggered: response.fastPathTriggered,
           warnings: response.warnings
         }
       };

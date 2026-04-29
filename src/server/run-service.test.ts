@@ -10,7 +10,7 @@ const workflowMocks = vi.hoisted(() => ({
   findEntryBySpecAndTitle: vi.fn(),
   transformIntoSandbox: vi.fn(),
   runSandboxedTest: vi.fn(),
-  parseCredentialMarker: vi.fn(),
+  parseCredentialExecution: vi.fn(),
   cleanupSandbox: vi.fn(),
   enableRcpMockAndWait: vi.fn()
 }));
@@ -42,7 +42,7 @@ vi.mock("../tug/execute/runner.js", () => ({
 }));
 
 vi.mock("../tug/execute/output-parser.js", () => ({
-  parseCredentialMarker: workflowMocks.parseCredentialMarker
+  parseCredentialExecution: workflowMocks.parseCredentialExecution
 }));
 
 vi.mock("../tug/sandbox/builder.js", () => ({
@@ -107,9 +107,26 @@ beforeEach(() => {
     stdout: "",
     stderr: ""
   });
-  workflowMocks.parseCredentialMarker.mockReturnValue({
-    email: "a@b.com",
-    password: "secret"
+  workflowMocks.parseCredentialExecution.mockReturnValue({
+    events: [],
+    runState: {
+      completedFullFlow: true,
+      partial: false
+    },
+    accounts: {
+      target: {
+        id: "a@b.com",
+        fields: {
+          email: "a@b.com",
+          password: "secret"
+        },
+        sourcePhases: ["final"],
+        provisioningState: "complete",
+        usable: true
+      },
+      secondary: []
+    },
+    warning: undefined
   });
   workflowMocks.cleanupSandbox.mockResolvedValue(undefined);
   workflowMocks.enableRcpMockAndWait.mockResolvedValue({
@@ -135,13 +152,47 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
   });
 
   it("falls back from fast mode to full mode when credentials are incomplete", async () => {
-    workflowMocks.parseCredentialMarker
+    workflowMocks.parseCredentialExecution
       .mockReturnValueOnce({
-        accountId: "123"
+        events: [],
+        runState: {
+          completedFullFlow: false,
+          partial: true
+        },
+        accounts: {
+          target: {
+            id: "123",
+            fields: {
+              accountId: "123"
+            },
+            sourcePhases: ["entry"],
+            provisioningState: "partial",
+            usable: false
+          },
+          secondary: []
+        },
+        warning: "Warning: Test exited at line 42. Credential marker captured but provisioned state is partial/incomplete."
       })
       .mockReturnValueOnce({
-        email: "a@b.com",
-        password: "secret"
+        events: [],
+        runState: {
+          completedFullFlow: true,
+          partial: false
+        },
+        accounts: {
+          target: {
+            id: "a@b.com",
+            fields: {
+              email: "a@b.com",
+              password: "secret"
+            },
+            sourcePhases: ["final"],
+            provisioningState: "complete",
+            usable: true
+          },
+          secondary: []
+        },
+        warning: undefined
       });
 
     workflowMocks.transformIntoSandbox
@@ -187,6 +238,7 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
     );
     expect(result.executionMode).toBe("full");
     expect(result.fallbackTriggered).toBe(true);
+    expect(result.fastPathTriggered).toBe(false);
     expect(result.warnings).toEqual(
       expect.arrayContaining([
         "Fast execution mode fallback triggered: reran in full mode for complete credentials."
@@ -194,9 +246,82 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
     );
   });
 
+  it("keeps fast mode when fast-early-return yields usable credentials", async () => {
+    workflowMocks.parseCredentialExecution.mockReturnValueOnce({
+      events: [],
+      runState: {
+        completedFullFlow: false,
+        partial: true,
+        exitPhase: "fast-early-return",
+        exitLine: 41
+      },
+      accounts: {
+        target: {
+          id: "a@b.com",
+          fields: {
+            email: "a@b.com",
+            password: "secret",
+            accountId: "123"
+          },
+          sourcePhases: ["entry", "fast-early-return"],
+          provisioningState: "partial",
+          usable: true
+        },
+        secondary: []
+      },
+      warning:
+        "Warning: Test exited at line 41. Credential marker captured but provisioned state is partial/incomplete."
+    });
+
+    const result = await executeUserGeneration({
+      spec: "/repo/spec.ts",
+      test: "creates user",
+      environment: "qa.qa"
+    });
+
+    expect(workflowMocks.runSandboxedTest).toHaveBeenCalledOnce();
+    expect(workflowMocks.transformIntoSandbox).toHaveBeenCalledOnce();
+    expect(result.executionMode).toBe("fast");
+    expect(result.fallbackTriggered).toBe(false);
+    expect(result.fastPathTriggered).toBe(true);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        "Warning: Test exited at line 41. Credential marker captured but provisioned state is partial/incomplete."
+      ])
+    );
+    expect(result.warnings).not.toContain(
+      "Target account is not fully provisioned or is missing primary credentials."
+    );
+    expect(result.timing).toEqual(
+      expect.objectContaining({
+        selectionMs: expect.any(Number),
+        transformMs: expect.any(Number),
+        executeMs: expect.any(Number),
+        totalMs: expect.any(Number)
+      })
+    );
+  });
+
   it("fails fast when auto-fallback is disabled", async () => {
-    workflowMocks.parseCredentialMarker.mockReturnValueOnce({
-      accountId: "123"
+    workflowMocks.parseCredentialExecution.mockReturnValueOnce({
+      events: [],
+      runState: {
+        completedFullFlow: false,
+        partial: true
+      },
+      accounts: {
+        target: {
+          id: "123",
+          fields: {
+            accountId: "123"
+          },
+          sourcePhases: ["entry"],
+          provisioningState: "partial",
+          usable: false
+        },
+        secondary: []
+      },
+      warning: "Warning: Test exited at line 42. Credential marker captured but provisioned state is partial/incomplete."
     });
 
     let captured: unknown;
@@ -235,6 +360,48 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
       expect.arrayContaining([
         "preflight warning",
         "RCP mock workflow run: https://github.com/redislabsdev/cloud-automation/actions/runs/42"
+      ])
+    );
+  });
+
+  it("surfaces partial-state warning when marker snapshots never reach final phase", async () => {
+    workflowMocks.parseCredentialExecution.mockReturnValueOnce({
+      events: [],
+      runState: {
+        completedFullFlow: false,
+        partial: true,
+        exitPhase: "fast-early-return",
+        exitLine: 73
+      },
+      accounts: {
+        target: {
+          id: "a@b.com",
+          fields: {
+            email: "a@b.com",
+            password: "secret"
+          },
+          sourcePhases: ["entry", "fast-early-return"],
+          provisioningState: "partial",
+          usable: false
+        },
+        secondary: []
+      },
+      warning:
+        "Warning: Test exited at line 73. Credential marker captured but provisioned state is partial/incomplete."
+    });
+
+    const result = await executeUserGeneration({
+      spec: "/repo/spec.ts",
+      test: "creates user",
+      environment: "qa.qa",
+      executionMode: "full"
+    });
+
+    expect(result.runState.partial).toBe(true);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        "Warning: Test exited at line 73. Credential marker captured but provisioned state is partial/incomplete.",
+        "Target account is not fully provisioned or is missing primary credentials."
       ])
     );
   });

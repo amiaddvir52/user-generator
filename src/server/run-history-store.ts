@@ -13,6 +13,21 @@ type RunHistoryStoreOptions = {
   maxEntries?: number;
 };
 
+const isNonEmpty = (value: string | undefined) => typeof value === "string" && value.trim().length > 0;
+
+const normalizeCredentialRecord = (credentials: Record<string, string | undefined>) =>
+  Object.fromEntries(
+    Object.entries(credentials).filter((entry): entry is [string, string] => isNonEmpty(entry[1]))
+  ) as Record<string, string | undefined>;
+
+const buildLegacyRunState = (credentials: Record<string, string | undefined>) => {
+  const hasPrimaryCredentials = isNonEmpty(credentials.email) && isNonEmpty(credentials.password);
+  return {
+    completedFullFlow: hasPrimaryCredentials,
+    partial: !hasPrimaryCredentials
+  };
+};
+
 const RunHistoryEntrySchema = z.object({
   id: z.string().min(1),
   createdAt: z.string().min(1),
@@ -41,9 +56,89 @@ const RunHistoryEntrySchema = z.object({
     fallbackTriggered: z.boolean().default(false),
     confidence: z.number(),
     sandboxPath: z.string().min(1),
-    credentials: z.record(z.string(), z.string().optional()),
+    accounts: z.object({
+      target: z
+        .object({
+          id: z.string().min(1),
+          fields: z.record(z.string(), z.string().optional()),
+          sourcePhases: z.array(z.enum(["entry", "fast-early-return", "final"])),
+          provisioningState: z.enum(["complete", "partial"]),
+          usable: z.boolean()
+        })
+        .nullable(),
+      secondary: z.array(
+        z.object({
+          id: z.string().min(1),
+          fields: z.record(z.string(), z.string().optional()),
+          sourcePhases: z.array(z.enum(["entry", "fast-early-return", "final"])),
+          provisioningState: z.enum(["complete", "partial"]),
+          usable: z.boolean()
+        })
+      )
+    }),
+    runState: z.object({
+      completedFullFlow: z.boolean(),
+      partial: z.boolean(),
+      exitPhase: z.enum(["entry", "fast-early-return", "final"]).optional(),
+      exitLine: z.number().int().positive().optional()
+    }),
+    timing: z.object({
+      selectionMs: z.number().nonnegative(),
+      transformMs: z.number().nonnegative(),
+      executeMs: z.number().nonnegative(),
+      totalMs: z.number().nonnegative()
+    }).optional(),
+    fastPathTriggered: z.boolean().optional(),
     warnings: z.array(z.string())
-  })
+  }).or(
+    z.object({
+      fingerprint: z.string().min(1),
+      compatibility: z.enum(["supported", "experimental"]),
+      selectedTest: z.object({
+        filePath: z.string().min(1),
+        title: z.string().min(1)
+      }),
+      environment: z.string().min(1),
+      executionMode: z.enum(["fast", "full"]).default("full"),
+      fallbackTriggered: z.boolean().default(false),
+      confidence: z.number(),
+      sandboxPath: z.string().min(1),
+      credentials: z.record(z.string(), z.string().optional()),
+      warnings: z.array(z.string())
+    }).transform((legacy) => {
+      const normalizedCredentials = normalizeCredentialRecord(legacy.credentials);
+      const runState = buildLegacyRunState(normalizedCredentials);
+      const targetUsable = runState.completedFullFlow;
+      return {
+        fingerprint: legacy.fingerprint,
+        compatibility: legacy.compatibility,
+        selectedTest: legacy.selectedTest,
+        environment: legacy.environment,
+        executionMode: legacy.executionMode,
+        fallbackTriggered: legacy.fallbackTriggered,
+        confidence: legacy.confidence,
+        sandboxPath: legacy.sandboxPath,
+        accounts: {
+          target: {
+            id:
+              normalizedCredentials.smAccountId ??
+              normalizedCredentials.accountId ??
+              normalizedCredentials.email ??
+              "legacy-target",
+            fields: normalizedCredentials,
+            sourcePhases: targetUsable ? ["final"] : ["entry"],
+            provisioningState: targetUsable ? "complete" : "partial",
+            usable: targetUsable
+          },
+          secondary: []
+        },
+        runState,
+        timing: undefined,
+        fastPathTriggered: undefined,
+        warnings: legacy.warnings
+      };
+    })
+  )
 });
 
 const RunHistoryFileSchema = z.object({

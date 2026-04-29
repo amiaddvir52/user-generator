@@ -76,8 +76,10 @@ export const RuntimeWorkspace = ({
 
   const credentialEntries = generationResult
     ? [
-        ...CREDENTIAL_FIELD_ORDER.map((key) => [key, generationResult.credentials[key]] as const),
-        ...Object.entries(generationResult.credentials).filter(
+        ...CREDENTIAL_FIELD_ORDER.map(
+          (key) => [key, generationResult.accounts.target?.fields[key]] as const
+        ),
+        ...Object.entries(generationResult.accounts.target?.fields ?? {}).filter(
           ([key]) => !CREDENTIAL_FIELD_ORDER.includes(key)
         )
       ].filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
@@ -284,8 +286,17 @@ export const RuntimeWorkspace = ({
               <StatusBadge tone={generationResult.compatibility === "supported" ? "success" : "warning"}>
                 {generationResult.compatibility}
               </StatusBadge>
+              <StatusBadge tone={generationResult.runState.partial ? "warning" : "success"}>
+                {generationResult.runState.partial ? "partial run-state" : "complete run-state"}
+              </StatusBadge>
             </div>
             <p className="helper-text">Source: {generationResult.selectedTest.filePath}</p>
+            {generationResult.accounts.target && (
+              <p className="helper-text">
+                Target account: {generationResult.accounts.target.id} ({generationResult.accounts.target.provisioningState},{" "}
+                {generationResult.accounts.target.usable ? "usable" : "not usable"})
+              </p>
+            )}
             {generationResult.warnings.length > 0 && (
               <ul className="choice-warnings">
                 {generationResult.warnings.map((warning) => (
@@ -336,6 +347,11 @@ export const RuntimeWorkspace = ({
             )}
 
             <p className="helper-text">Sandbox: {generationResult.sandboxPath}</p>
+            {generationResult.accounts.secondary.length > 0 && (
+              <p className="helper-text">
+                Secondary accounts captured: {generationResult.accounts.secondary.length}
+              </p>
+            )}
           </div>
         )}
       </Card>

@@ -6,10 +6,10 @@ import type {
   CompatibilityResult,
   IndexData,
   RepoHandle,
-  ScoreHints,
   SpecIndexEntry
 } from "../common/types.js";
 import { discoverTeardownIdentifiers } from "./teardown-detector.js";
+import { extractScoreHintsFromText } from "../intent/hints.js";
 
 const TEST_TITLE_TAG_PATTERN = /@[a-z0-9_-]+/gi;
 
@@ -18,26 +18,6 @@ const isDescribeExpression = (expressionText: string) =>
 
 const isTestExpression = (expressionText: string) =>
   /(^|\.)test(?:\.(only|skip|fixme|fail))?$/.test(expressionText);
-
-const collectScoreHints = (title: string): ScoreHints => {
-  const lower = title.toLowerCase();
-  return {
-    payerLocation: lower.includes("us")
-      ? "us"
-      : lower.includes("eu")
-        ? "eu"
-        : lower.includes("gcp")
-          ? "gcp"
-          : undefined,
-    contractType: lower.includes("on-demand")
-      ? "on-demand"
-      : lower.includes("annual")
-        ? "annual"
-        : lower.includes("monthly")
-          ? "monthly"
-          : undefined
-  };
-};
 
 const asStringLiteral = (node: Node | undefined) => {
   if (!node) {
@@ -140,7 +120,7 @@ const collectEntriesFromNode = ({
       tags: [...new Set(title.match(TEST_TITLE_TAG_PATTERN) ?? [])].map((tag) => tag.toLowerCase()).sort(),
       helperImports,
       teardownCalls: callbackBody ? collectDirectCallIdentifiers(callbackBody) : [],
-      scoreHints: collectScoreHints(`${describeStack.join(" ")} ${title}`)
+      scoreHints: extractScoreHintsFromText(`${describeStack.join(" ")} ${title}`)
     });
   });
 };
@@ -220,4 +200,3 @@ export const buildSpecIndex = async ({
     teardown
   };
 };
-

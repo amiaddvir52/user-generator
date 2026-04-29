@@ -56,6 +56,36 @@ export type UserGenerationCredentials = {
   [key: string]: string | undefined;
 };
 
+export type UserGenerationSnapshotPhase = "entry" | "fast-early-return" | "final";
+export type UserGenerationProvisioningState = "complete" | "partial";
+
+export type UserGenerationAccount = {
+  id: string;
+  fields: UserGenerationCredentials;
+  sourcePhases: UserGenerationSnapshotPhase[];
+  provisioningState: UserGenerationProvisioningState;
+  usable: boolean;
+};
+
+export type UserGenerationAccounts = {
+  target: UserGenerationAccount | null;
+  secondary: UserGenerationAccount[];
+};
+
+export type UserGenerationRunState = {
+  completedFullFlow: boolean;
+  partial: boolean;
+  exitPhase?: UserGenerationSnapshotPhase;
+  exitLine?: number;
+};
+
+export type UserGenerationTiming = {
+  selectionMs: number;
+  transformMs: number;
+  executeMs: number;
+  totalMs: number;
+};
+
 export type ExecutionMode = "fast" | "full";
 
 export type UserGenerationRemovedCall = {
@@ -78,7 +108,10 @@ export type UserGenerationResponse = {
   confidence: number;
   removedCalls: UserGenerationRemovedCall[];
   sandboxPath: string;
-  credentials: UserGenerationCredentials;
+  accounts: UserGenerationAccounts;
+  runState: UserGenerationRunState;
+  timing?: UserGenerationTiming;
+  fastPathTriggered?: boolean;
   warnings: string[];
 };
 
@@ -119,7 +152,10 @@ export type RunHistoryResultSnapshot = Pick<
   | "fallbackTriggered"
   | "confidence"
   | "sandboxPath"
-  | "credentials"
+  | "accounts"
+  | "runState"
+  | "timing"
+  | "fastPathTriggered"
   | "warnings"
 >;
 

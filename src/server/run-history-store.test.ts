@@ -40,9 +40,22 @@ const createHistoryEntry = (id: string, createdAt: string): RunHistoryEntry => (
     fallbackTriggered: false,
     confidence: 0.9,
     sandboxPath: `/tmp/sandbox-${id}`,
-    credentials: {
-      email: `${id}@example.com`,
-      password: "secret"
+    accounts: {
+      target: {
+        id: `${id}@example.com`,
+        fields: {
+          email: `${id}@example.com`,
+          password: "secret"
+        },
+        sourcePhases: ["final"],
+        provisioningState: "complete",
+        usable: true
+      },
+      secondary: []
+    },
+    runState: {
+      completedFullFlow: true,
+      partial: false
     },
     warnings: []
   }
@@ -166,5 +179,7 @@ describe("run history store", () => {
     expect(loaded[0].request.allowAutoFallback).toBe(true);
     expect(loaded[0].result.executionMode).toBe("full");
     expect(loaded[0].result.fallbackTriggered).toBe(false);
+    expect(loaded[0].result.accounts.target?.fields.email).toBe("legacy@example.com");
+    expect(loaded[0].result.runState.completedFullFlow).toBe(true);
   });
 });

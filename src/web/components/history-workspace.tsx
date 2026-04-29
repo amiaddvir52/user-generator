@@ -42,8 +42,10 @@ const getPromptSummary = (entry: RunHistoryEntry) => {
 
 const getCredentialEntries = (entry: RunHistoryEntry) =>
   [
-    ...CREDENTIAL_FIELD_ORDER.map((key) => [key, entry.result.credentials[key]] as const),
-    ...Object.entries(entry.result.credentials).filter(([key]) => !CREDENTIAL_FIELD_ORDER.includes(key))
+    ...CREDENTIAL_FIELD_ORDER.map((key) => [key, entry.result.accounts.target?.fields[key]] as const),
+    ...Object.entries(entry.result.accounts.target?.fields ?? {}).filter(
+      ([key]) => !CREDENTIAL_FIELD_ORDER.includes(key)
+    )
   ].filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0);
 
 export const HistoryWorkspace = ({
@@ -103,6 +105,9 @@ export const HistoryWorkspace = ({
                     {entry.result.compatibility}
                   </StatusBadge>
                   <StatusBadge tone="neutral">confidence {entry.result.confidence.toFixed(2)}</StatusBadge>
+                  <StatusBadge tone={entry.result.runState.partial ? "warning" : "success"}>
+                    {entry.result.runState.partial ? "partial" : "complete"}
+                  </StatusBadge>
                 </div>
 
                 <p className="helper-text">Source: {entry.result.selectedTest.filePath}</p>

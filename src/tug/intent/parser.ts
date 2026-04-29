@@ -1,5 +1,6 @@
 import { IntentSchema } from "./schema.js";
 import type { Intent } from "../common/types.js";
+import { extractScoreHintsFromText } from "./hints.js";
 
 const STOP_WORDS = new Set([
   "a",
@@ -16,7 +17,9 @@ const STOP_WORDS = new Set([
   "by",
   "from",
   "user",
-  "account"
+  "account",
+  "mp",
+  "plan"
 ]);
 
 const tokenize = (input: string) =>
@@ -27,24 +30,7 @@ const tokenize = (input: string) =>
 
 export const parseIntent = (prompt: string): Intent => {
   const keywords = [...new Set(tokenize(prompt))];
-
-  const lowered = prompt.toLowerCase();
-  const hints = {
-    payerLocation: lowered.includes("us")
-      ? "us"
-      : lowered.includes("eu")
-        ? "eu"
-        : lowered.includes("gcp")
-          ? "gcp"
-          : undefined,
-    contractType: lowered.includes("on-demand")
-      ? "on-demand"
-      : lowered.includes("annual")
-        ? "annual"
-        : lowered.includes("monthly")
-          ? "monthly"
-          : undefined
-  };
+  const hints = extractScoreHintsFromText(prompt);
 
   return IntentSchema.parse({
     rawPrompt: prompt,
@@ -52,4 +38,3 @@ export const parseIntent = (prompt: string): Intent => {
     hints
   });
 };
-

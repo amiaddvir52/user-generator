@@ -167,6 +167,43 @@ export type CredentialPayload = {
   [key: string]: string | undefined;
 };
 
+export type CredentialSnapshotPhase = "entry" | "fast-early-return" | "final";
+
+export type CredentialSnapshotEvent = {
+  phase: CredentialSnapshotPhase;
+  line?: number;
+  credentials: CredentialPayload;
+};
+
+export type ProvisioningState = "complete" | "partial";
+
+export type GeneratedAccount = {
+  id: string;
+  fields: CredentialPayload;
+  sourcePhases: CredentialSnapshotPhase[];
+  provisioningState: ProvisioningState;
+  usable: boolean;
+};
+
+export type GeneratedAccounts = {
+  target: GeneratedAccount | null;
+  secondary: GeneratedAccount[];
+};
+
+export type RunState = {
+  completedFullFlow: boolean;
+  partial: boolean;
+  exitPhase?: CredentialSnapshotPhase;
+  exitLine?: number;
+};
+
+export type RunTiming = {
+  selectionMs: number;
+  transformMs: number;
+  executeMs: number;
+  totalMs: number;
+};
+
 export type CommandResult = {
   ok: true;
   data: Record<string, unknown>;

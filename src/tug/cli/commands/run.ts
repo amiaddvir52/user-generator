@@ -11,11 +11,10 @@ import { cleanupSandbox } from "../../sandbox/builder.js";
 import { ensureRequiredEnvironment } from "../../validate/env-check.js";
 import { runPreflightGates } from "../../validate/gates.js";
 import { runSandboxedTest } from "../../execute/runner.js";
-import { parseCredentialMarker } from "../../execute/output-parser.js";
-import { hasCompletePrimaryCredentials } from "../../execute/credential-completeness.js";
+import { parseCredentialExecution } from "../../execute/output-parser.js";
 import { chooseFromCandidates, confirmPrompt } from "../prompt.js";
 import { findEntryBySpecAndTitle, getOrBuildIndex, renderRemovedCallTable, transformIntoSandbox } from "../workflow.js";
-import type { CredentialPayload, ExecutionMode } from "../../common/types.js";
+import type { ExecutionMode, RunTiming } from "../../common/types.js";
 
 export const runRunCommand = async (
   prompt: string | undefined,
@@ -36,6 +35,7 @@ export const runRunCommand = async (
     autoFallback?: boolean;
   }
 ) => {
+  const totalStartedAt = Date.now();
   const context = await loadRunContext({
     repo: options.repo,
     environment: options.environment
@@ -63,6 +63,7 @@ export const runRunCommand = async (
     compatibility: preflight.compatibility,
     forceReindex: Boolean(options.reindex)
   });
+  const selectionStartedAt = Date.now();
 
   let entry;
   let selectionMeta:
@@ -118,6 +119,7 @@ export const runRunCommand = async (
       );
     }
   }
+  const selectionMs = Date.now() - selectionStartedAt;
 
   const executionModeOption = options.executionMode?.trim().toLowerCase();
   if (
@@ -135,8 +137,12 @@ export const runRunCommand = async (
   const allowAutoFallback = options.autoFallback ?? true;
   type ExecutionAttemptResult = {
     pipeline: Awaited<ReturnType<typeof transformIntoSandbox>>;
-    credentials: CredentialPayload;
+    credentialExecution: ReturnType<typeof parseCredentialExecution>;
     executionMode: ExecutionMode;
+    timing: {
+      transformMs: number;
+      executeMs: number;
+    };
   };
 
   const executeAttempt = async ({
@@ -148,6 +154,7 @@ export const runRunCommand = async (
     showPreviewAndPrompt: boolean;
     cleanupOnFailure: boolean;
   }) => {
+    const transformStartedAt = Date.now();
     const pipeline = await transformIntoSandbox({
       entry,
       repo: preflight.repo,
@@ -158,6 +165,7 @@ export const runRunCommand = async (
       executionMode,
       env: executionEnv
     });
+    const transformMs = Date.now() - transformStartedAt;
 
     let cleanupAfterSuccess = !options.keepSandbox;
     try {
@@ -205,15 +213,17 @@ export const runRunCommand = async (
         }
       }
 
+      const executeStartedAt = Date.now();
       const execution = await runSandboxedTest({
         repo: preflight.repo,
         sandbox: pipeline.sandbox,
         grepPattern,
         env: executionEnv
       });
+      const executeMs = Date.now() - executeStartedAt;
 
-      const credentials = parseCredentialMarker(execution.markerLines);
-      if (executionMode === "fast" && !hasCompletePrimaryCredentials(credentials)) {
+      const credentialExecution = parseCredentialExecution(execution.markerLines);
+      if (executionMode === "fast" && !credentialExecution.accounts.target?.usable) {
         throw new TugError(
           "CREDENTIAL_MARKER_MISSING",
           "Fast execution mode completed without complete primary credentials (email/password)."
@@ -222,8 +232,12 @@ export const runRunCommand = async (
 
       return {
         pipeline,
-        credentials,
-        executionMode
+        credentialExecution,
+        executionMode,
+        timing: {
+          transformMs,
+          executeMs
+        }
       };
     } catch (error) {
       if (cleanupOnFailure) {
@@ -283,6 +297,23 @@ export const runRunCommand = async (
   if (fallbackWarning) {
     warnings.push(fallbackWarning);
   }
+  if (result.credentialExecution.warning) {
+    warnings.push(result.credentialExecution.warning);
+  }
+  if (!result.credentialExecution.accounts.target?.usable) {
+    warnings.push("Target account is not fully provisioned or is missing primary credentials.");
+  }
+  const timing: RunTiming = {
+    selectionMs,
+    transformMs: result.timing.transformMs,
+    executeMs: result.timing.executeMs,
+    totalMs: Date.now() - totalStartedAt
+  };
+  const fastPathTriggered =
+    result.executionMode === "fast" &&
+    result.credentialExecution.runState.partial &&
+    result.credentialExecution.runState.exitPhase === "fast-early-return" &&
+    Boolean(result.credentialExecution.accounts.target?.usable);
 
   const payload = {
     ok: true,
@@ -301,12 +332,24 @@ export const runRunCommand = async (
     confidence: result.pipeline.transform.confidence,
     removedCalls: result.pipeline.transform.removedCalls,
     sandboxPath: result.pipeline.sandbox.path,
-    credentials: result.credentials,
+    accounts: result.credentialExecution.accounts,
+    runState: result.credentialExecution.runState,
+    timing,
+    fastPathTriggered,
     warnings
   };
 
   if (options.exportEnv) {
-    const envLines = Object.entries(result.credentials)
+    const exportWarning =
+      !result.credentialExecution.accounts.target?.usable
+        ? "Target account is not fully provisioned; skipping export-env output."
+        : undefined;
+    if (exportWarning) {
+      warnings.push(exportWarning);
+    }
+
+    const envSource = exportWarning ? {} : result.credentialExecution.accounts.target?.fields ?? {};
+    const envLines = Object.entries(envSource)
       .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
       .map(
         ([key, value]) =>
@@ -333,7 +376,10 @@ export const runRunCommand = async (
       `Execution mode: ${result.executionMode}`,
       `Fallback triggered: ${fallbackTriggered ? "yes" : "no"}`,
       `Sandbox: ${result.pipeline.sandbox.path}`,
-      `Credentials: ${JSON.stringify(result.credentials)}`,
+      `Target account: ${JSON.stringify(result.credentialExecution.accounts.target?.fields ?? {})}`,
+      `Run state: ${result.credentialExecution.runState.partial ? "partial" : "complete"}`,
+      `Fast path: ${fastPathTriggered ? "yes" : "no"}`,
+      `Timing(ms): ${JSON.stringify(timing)}`,
       options.output ? `Wrote output to ${options.output}` : ""
     ]
       .filter(Boolean)

@@ -8,12 +8,17 @@ import { cleanupSandbox } from "../tug/sandbox/builder.js";
 import { ensureRequiredEnvironment } from "../tug/validate/env-check.js";
 import { runPreflightGates } from "../tug/validate/gates.js";
 import { runSandboxedTest } from "../tug/execute/runner.js";
-import { parseCredentialMarker } from "../tug/execute/output-parser.js";
-import { hasCompletePrimaryCredentials } from "../tug/execute/credential-completeness.js";
+import { parseCredentialExecution } from "../tug/execute/output-parser.js";
 import { findEntryBySpecAndTitle, getOrBuildIndex, transformIntoSandbox } from "../tug/cli/workflow.js";
 import { isTugError, TugError } from "../tug/common/errors.js";
 import { enableRcpMockAndWait } from "./rcp-mock.js";
-import type { CredentialPayload, ExecutionMode, RemovedCallsite } from "../tug/common/types.js";
+import type {
+  ExecutionMode,
+  GeneratedAccounts,
+  RemovedCallsite,
+  RunState,
+  RunTiming
+} from "../tug/common/types.js";
 
 export type UserGenerationInput = {
   prompt?: string;
@@ -49,7 +54,10 @@ export type UserGenerationPayload = {
   confidence: number;
   removedCalls: RemovedCallsite[];
   sandboxPath: string;
-  credentials: CredentialPayload;
+  accounts: GeneratedAccounts;
+  runState: RunState;
+  timing?: RunTiming;
+  fastPathTriggered?: boolean;
   warnings: string[];
 };
 
@@ -87,6 +95,7 @@ export const executeUserGeneration = async (
 const runUserGeneration = async (
   input: UserGenerationInput
 ): Promise<UserGenerationPayload> => {
+  const totalStartedAt = Date.now();
   const context = await loadRunContext({
     environment: input.environment
   });
@@ -113,6 +122,7 @@ const runUserGeneration = async (
     compatibility: preflight.compatibility,
     forceReindex: Boolean(input.reindex)
   });
+  const selectionStartedAt = Date.now();
 
   let entry;
   let selectionMeta: UserGenerationPayload["selection"];
@@ -138,6 +148,7 @@ const runUserGeneration = async (
       reasons: selection.selected.reasons
     };
   }
+  const selectionMs = Date.now() - selectionStartedAt;
 
   const executeAttempt = async ({
     executionMode,
@@ -146,6 +157,7 @@ const runUserGeneration = async (
     executionMode: ExecutionMode;
     cleanupOnFailure: boolean;
   }) => {
+    const transformStartedAt = Date.now();
     const pipeline = await transformIntoSandbox({
       entry,
       repo: preflight.repo,
@@ -156,19 +168,22 @@ const runUserGeneration = async (
       executionMode,
       env: executionEnv
     });
+    const transformMs = Date.now() - transformStartedAt;
 
     let cleanupAfterSuccess = !input.keepSandbox;
     try {
       const grepPattern = buildPlaywrightGrepPattern(entry);
+      const executeStartedAt = Date.now();
       const execution = await runSandboxedTest({
         repo: preflight.repo,
         sandbox: pipeline.sandbox,
         grepPattern,
         env: executionEnv
       });
-      const credentials = parseCredentialMarker(execution.markerLines);
+      const credentialExecution = parseCredentialExecution(execution.markerLines);
+      const executeMs = Date.now() - executeStartedAt;
 
-      if (executionMode === "fast" && !hasCompletePrimaryCredentials(credentials)) {
+      if (executionMode === "fast" && !credentialExecution.accounts.target?.usable) {
         throw new TugError(
           "CREDENTIAL_MARKER_MISSING",
           "Fast execution mode completed without complete primary credentials (email/password)."
@@ -178,7 +193,11 @@ const runUserGeneration = async (
       return {
         executionMode,
         pipeline,
-        credentials
+        credentialExecution,
+        timing: {
+          transformMs,
+          executeMs
+        }
       };
     } catch (error) {
       if (cleanupOnFailure) {
@@ -201,7 +220,11 @@ const runUserGeneration = async (
   type ExecutionAttemptResult = {
     executionMode: ExecutionMode;
     pipeline: Awaited<ReturnType<typeof transformIntoSandbox>>;
-    credentials: CredentialPayload;
+    credentialExecution: ReturnType<typeof parseCredentialExecution>;
+    timing: {
+      transformMs: number;
+      executeMs: number;
+    };
   };
 
   try {
@@ -249,6 +272,12 @@ const runUserGeneration = async (
     if (fallbackWarning) {
       warningLines.push(fallbackWarning);
     }
+    if (attemptResult.credentialExecution.warning) {
+      warningLines.push(attemptResult.credentialExecution.warning);
+    }
+    if (!attemptResult.credentialExecution.accounts.target?.usable) {
+      warningLines.push("Target account is not fully provisioned or is missing primary credentials.");
+    }
     if (rcpMockRunUrl) {
       warningLines.push(`RCP mock workflow run: ${rcpMockRunUrl}`);
     }
@@ -257,6 +286,17 @@ const runUserGeneration = async (
     const warnings = logFilePath
       ? [...warningLines, `Run log: ${logFilePath}`]
       : warningLines;
+    const timing: RunTiming = {
+      selectionMs,
+      transformMs: attemptResult.timing.transformMs,
+      executeMs: attemptResult.timing.executeMs,
+      totalMs: Date.now() - totalStartedAt
+    };
+    const fastPathTriggered =
+      resolvedExecutionMode === "fast" &&
+      attemptResult.credentialExecution.runState.partial &&
+      attemptResult.credentialExecution.runState.exitPhase === "fast-early-return" &&
+      Boolean(attemptResult.credentialExecution.accounts.target?.usable);
 
     tugLog("run.done", {
       fingerprint: preflight.fingerprint.fingerprint,
@@ -264,7 +304,9 @@ const runUserGeneration = async (
       filePath: entry.filePath,
       testTitle: entry.testTitle,
       executionMode: resolvedExecutionMode,
-      fallbackTriggered
+      fallbackTriggered,
+      fastPathTriggered,
+      timing
     });
 
     return {
@@ -282,7 +324,10 @@ const runUserGeneration = async (
       confidence: attemptResult.pipeline.transform.confidence,
       removedCalls: attemptResult.pipeline.transform.removedCalls,
       sandboxPath: attemptResult.pipeline.sandbox.path,
-      credentials: attemptResult.credentials,
+      accounts: attemptResult.credentialExecution.accounts,
+      runState: attemptResult.credentialExecution.runState,
+      timing,
+      fastPathTriggered,
       warnings
     };
   } catch (error) {

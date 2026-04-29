@@ -9,14 +9,15 @@ import { validateRepositoryStructure } from "../src/tug/repo/validator.js";
 import { computeFingerprint } from "../src/tug/repo/fingerprint.js";
 import { parseIntent } from "../src/tug/intent/parser.js";
 import { selectCandidateDeterministically } from "../src/tug/selector/deterministic.js";
-import { parseCredentialMarker } from "../src/tug/execute/output-parser.js";
+import { parseCredentialExecution, parseCredentialMarker } from "../src/tug/execute/output-parser.js";
 import { flushBufferedLines, readBufferedLines } from "../src/tug/execute/stdio.js";
 import { TugError } from "../src/tug/common/errors.js";
 import { buildPlaywrightDisplayTitle, buildPlaywrightGrepPattern } from "../src/tug/common/playwright.js";
 import { quoteForShellValue } from "../src/tug/common/shell.js";
 import {
   credentialProbeStatements,
-  earlyReturnCredentialProbeStatements
+  earlyReturnCredentialProbeStatements,
+  entryCredentialProbeStatements
 } from "../src/tug/transform/credential-probe.js";
 import { validateSyntaxRoundTrip } from "../src/tug/validate/syntax.js";
 import { resolveSetupCacheRoot } from "../src/tug/common/paths.js";
@@ -153,11 +154,145 @@ describe("selector", () => {
         }
       ],
       intent,
-      requireUnambiguous: true
+      requireUnambiguous: false
     });
 
     expect(selection.selected.entry.filePath).toBe("/tmp/b.spec.ts");
     expect(selection.ambiguous).toBe(false);
+  });
+
+  it("does not infer slash-disjunction provider hints from describe/title boilerplate", () => {
+    const intent = parseIntent("create gcp account");
+
+    const selection = selectCandidateDeterministically({
+      entries: [
+        {
+          filePath: "/tmp/boilerplate.spec.ts",
+          testTitle: "provisions account",
+          describeTitles: ["Marketplace AWS/GCP variants"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: [],
+          scoreHints: {}
+        },
+        {
+          filePath: "/tmp/target.spec.ts",
+          testTitle: "provisions gcp account",
+          describeTitles: ["Marketplace"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: [],
+          scoreHints: {
+            payerLocation: "gcp"
+          }
+        }
+      ],
+      intent,
+      requireUnambiguous: false
+    });
+
+    expect(selection.selected.entry.filePath).toBe("/tmp/target.spec.ts");
+    expect(selection.selected.reasons.some((reason) => reason.includes("payer location gcp"))).toBe(true);
+  });
+
+  it("prioritizes title keyword hits over path-only hits", () => {
+    const intent = parseIntent("unsubscribe marketplace");
+    const selection = selectCandidateDeterministically({
+      entries: [
+        {
+          filePath: "/tmp/marketplace/unsubscribe.spec.ts",
+          testTitle: "validates marketplace contract",
+          describeTitles: ["Context"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: [],
+          scoreHints: {}
+        },
+        {
+          filePath: "/tmp/marketplace/context.spec.ts",
+          testTitle: "unsubscribe account",
+          describeTitles: ["Context"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: [],
+          scoreHints: {}
+        }
+      ],
+      intent,
+      requireUnambiguous: false
+    });
+
+    expect(selection.selected.entry.testTitle).toBe("unsubscribe account");
+  });
+
+  it("weights action intents over contextual keywords", () => {
+    const intent = parseIntent("upgrade marketplace gcp");
+    const selection = selectCandidateDeterministically({
+      entries: [
+        {
+          filePath: "/tmp/a.spec.ts",
+          testTitle: "marketplace gcp migration context",
+          describeTitles: ["Context"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: [],
+          scoreHints: {}
+        },
+        {
+          filePath: "/tmp/b.spec.ts",
+          testTitle: "upgrade account",
+          describeTitles: ["Marketplace"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: [],
+          scoreHints: {}
+        }
+      ],
+      intent,
+      requireUnambiguous: false
+    });
+
+    expect(selection.selected.entry.filePath).toBe("/tmp/b.spec.ts");
+    expect(selection.selected.reasons.some((reason) => reason.includes("action"))).toBe(true);
+  });
+
+  it("uses cost-aware tie-break for close scores", () => {
+    const intent = parseIntent("upgrade");
+    const selection = selectCandidateDeterministically({
+      entries: [
+        {
+          filePath: "/tmp/high-cost.spec.ts",
+          testTitle: "upgrade account",
+          describeTitles: ["Context"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: Array.from({ length: 12 }, () => "cleanup"),
+          scoreHints: {}
+        },
+        {
+          filePath: "/tmp/low-cost.spec.ts",
+          testTitle: "upgrade user",
+          describeTitles: ["Context"],
+          tags: [],
+          helperImports: [],
+          teardownCalls: [],
+          scoreHints: {}
+        }
+      ],
+      intent,
+      requireUnambiguous: false
+    });
+
+    expect(selection.selected.entry.filePath).toBe("/tmp/low-cost.spec.ts");
+    expect(selection.selected.reasons).toContain("cost-aware tie-break winner (close-score window)");
+  });
+
+  it("treats mp and plan as stop-words in intent tokenization", () => {
+    const intent = parseIntent("upgrade mp plan for marketplace user");
+    expect(intent.keywords).not.toContain("mp");
+    expect(intent.keywords).not.toContain("plan");
+    expect(intent.keywords).toContain("upgrade");
+    expect(intent.keywords).toContain("marketplace");
   });
 });
 
@@ -245,6 +380,37 @@ describe("credential marker parsing", () => {
       password: "secret"
     });
   });
+
+  it("reports partial run-state when final marker is missing", () => {
+    const parsed = parseCredentialExecution([
+      '__TUG_CRED__{"phase":"entry","line":14,"credentials":{"accountId":"a-1"}}',
+      '__TUG_CRED__{"phase":"fast-early-return","line":27,"credentials":{"email":"a@b.com","password":"secret","accountId":"a-1"}}'
+    ]);
+
+    expect(parsed.runState).toEqual({
+      completedFullFlow: false,
+      partial: true,
+      exitPhase: "fast-early-return",
+      exitLine: 27
+    });
+    expect(parsed.warning).toContain("partial/incomplete");
+    expect(parsed.accounts.target?.provisioningState).toBe("partial");
+    expect(parsed.accounts.target?.usable).toBe(true);
+  });
+
+  it("classifies final snapshot as target and prior sibling as secondary", () => {
+    const parsed = parseCredentialExecution([
+      '__TUG_CRED__{"phase":"entry","line":5,"credentials":{"email":"sibling@b.com","password":"x","accountId":"s-1"}}',
+      '__TUG_CRED__{"phase":"final","line":88,"credentials":{"email":"target@b.com","password":"y","accountId":"t-1"}}'
+    ]);
+
+    expect(parsed.runState.partial).toBe(false);
+    expect(parsed.accounts.target?.fields.accountId).toBe("t-1");
+    expect(parsed.accounts.target?.provisioningState).toBe("complete");
+    expect(parsed.accounts.target?.usable).toBe(true);
+    expect(parsed.accounts.secondary).toHaveLength(1);
+    expect(parsed.accounts.secondary[0].fields.accountId).toBe("s-1");
+  });
 });
 
 describe("credential probe generation", () => {
@@ -262,6 +428,7 @@ describe("credential probe generation", () => {
       "probe.ts",
       [
         "const testBody = () => {",
+        ...entryCredentialProbeStatements().map((statement) => `  ${statement}`),
         ...credentialProbeStatements().map((statement) => `  ${statement}`),
         "};"
       ].join("\n"),
@@ -273,7 +440,7 @@ describe("credential probe generation", () => {
   });
 
   it("includes marketplace and SM account identifiers in the probe payload", () => {
-    const statements = credentialProbeStatements().join("\n");
+    const statements = entryCredentialProbeStatements().join("\n");
     expect(statements).toContain("marketplaceId:");
     expect(statements).toContain("smAccountId:");
   });
@@ -292,6 +459,7 @@ describe("credential probe generation", () => {
       "probe-fast.ts",
       [
         "const testBody = () => {",
+        ...entryCredentialProbeStatements().map((statement) => `  ${statement}`),
         ...earlyReturnCredentialProbeStatements().map((statement) => `  ${statement}`),
         ...credentialProbeStatements().map((statement) => `  ${statement}`),
         "};"
@@ -308,6 +476,7 @@ describe("credential probe generation", () => {
     expect(statements).not.toContain("typeof marketplaceId");
     expect(statements).not.toContain("typeof accountId");
     expect(statements).not.toContain("typeof smAccountId");
+    expect(statements).toContain("fast-early-return");
   });
 });
 
@@ -326,6 +495,7 @@ describe("validateSyntaxRoundTrip", () => {
       "test(\"creates account\", async ({ page }) => {",
       "  await login(page);",
       "  expect(1).toBe(1);",
+      ...entryCredentialProbeStatements().map((statement) => `  ${statement}`),
       ...credentialProbeStatements().map((statement) => `  ${statement}`),
       "});"
     ].join("\n");

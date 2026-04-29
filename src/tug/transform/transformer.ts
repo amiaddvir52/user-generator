@@ -11,7 +11,11 @@ import type {
   TransformResult
 } from "../common/types.js";
 import { computeTransformConfidence } from "./confidence.js";
-import { credentialProbeStatements, earlyReturnCredentialProbeStatements } from "./credential-probe.js";
+import {
+  credentialProbeStatements,
+  earlyReturnCredentialProbeStatements,
+  entryCredentialProbeStatements
+} from "./credential-probe.js";
 import { removeUnusedImportedSpecifiers, rewriteRelativeImportsToAbsolute } from "./import-rewriter.js";
 
 const AFTER_HOOK_PATTERN = /(^|\.)(afterEach|afterAll|beforeAll)$/;
@@ -271,9 +275,10 @@ export const transformSelectedSpec = async ({
     );
   }
 
-  if (executionMode === "fast") {
-    selectedTestBody.insertStatements(0, earlyReturnCredentialProbeStatements().join("\n"));
-  }
+  const preludeStatements = executionMode === "fast"
+    ? [...entryCredentialProbeStatements(), ...earlyReturnCredentialProbeStatements()]
+    : entryCredentialProbeStatements();
+  selectedTestBody.insertStatements(0, preludeStatements.join("\n"));
   selectedTestBody.addStatements(credentialProbeStatements().join("\n"));
 
   rewriteRelativeImportsToAbsolute({

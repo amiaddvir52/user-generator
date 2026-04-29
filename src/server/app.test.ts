@@ -565,7 +565,20 @@ describe("user generation API", () => {
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
-      credentials: { email: "a@b.com", password: "secret" },
+      accounts: {
+        target: {
+          id: "a@b.com",
+          fields: { email: "a@b.com", password: "secret" },
+          sourcePhases: ["final"],
+          provisioningState: "complete",
+          usable: true
+        },
+        secondary: []
+      },
+      runState: {
+        completedFullFlow: true,
+        partial: false
+      },
       warnings: []
     });
 
@@ -581,7 +594,11 @@ describe("user generation API", () => {
     expect(response.json()).toMatchObject({
       fingerprint: "fp-123",
       selectedTest: { title: "creates user" },
-      credentials: { email: "a@b.com", password: "secret" }
+      accounts: {
+        target: {
+          fields: { email: "a@b.com", password: "secret" }
+        }
+      }
     });
     expect(executeUserGeneration).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -618,7 +635,15 @@ describe("user generation API", () => {
             executionMode: "fast",
             fallbackTriggered: false,
             selectedTest: { title: "creates user" },
-            credentials: { email: "a@b.com", password: "secret" }
+            accounts: {
+              target: {
+                fields: { email: "a@b.com", password: "secret" }
+              }
+            },
+            runState: {
+              completedFullFlow: true,
+              partial: false
+            }
           }
         }
       ]
@@ -717,7 +742,20 @@ describe("user generation API", () => {
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
-      credentials: { email: "a@b.com", password: "secret" },
+      accounts: {
+        target: {
+          id: "a@b.com",
+          fields: { email: "a@b.com", password: "secret" },
+          sourcePhases: ["final"],
+          provisioningState: "complete",
+          usable: true
+        },
+        secondary: []
+      },
+      runState: {
+        completedFullFlow: true,
+        partial: false
+      },
       warnings: []
     });
 
@@ -756,7 +794,20 @@ describe("user generation API", () => {
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
-      credentials: { email: "a@b.com", password: "secret" },
+      accounts: {
+        target: {
+          id: "a@b.com",
+          fields: { email: "a@b.com", password: "secret" },
+          sourcePhases: ["final"],
+          provisioningState: "complete",
+          usable: true
+        },
+        secondary: []
+      },
+      runState: {
+        completedFullFlow: true,
+        partial: false
+      },
       warnings: []
     });
 
@@ -831,7 +882,20 @@ describe("user generation API", () => {
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
-      credentials: { email: "a@b.com", password: "secret" },
+      accounts: {
+        target: {
+          id: "a@b.com",
+          fields: { email: "a@b.com", password: "secret" },
+          sourcePhases: ["final"],
+          provisioningState: "complete",
+          usable: true
+        },
+        secondary: []
+      },
+      runState: {
+        completedFullFlow: true,
+        partial: false
+      },
       warnings: []
     }));
 
@@ -875,7 +939,20 @@ describe("user generation API", () => {
       confidence: 0.95,
       removedCalls: [],
       sandboxPath: "/tmp/sandbox",
-      credentials: { email: "a@b.com", password: "secret" },
+      accounts: {
+        target: {
+          id: "a@b.com",
+          fields: { email: "a@b.com", password: "secret" },
+          sourcePhases: ["final"],
+          provisioningState: "complete",
+          usable: true
+        },
+        secondary: []
+      },
+      runState: {
+        completedFullFlow: true,
+        partial: false
+      },
       warnings: []
     });
 
