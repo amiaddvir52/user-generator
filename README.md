@@ -8,6 +8,8 @@
 ## Quickstart (fresh clone)
 
 ```bash
+git clone https://github.com/amiaddvir52/user-generator.git
+cd user-generator
 npm start
 ```
 
@@ -24,6 +26,10 @@ npm install
 npm run build
 npm run start:app
 ```
+
+Troubleshooting:
+
+- If you see `ENOENT: no such file or directory, open '.../package.json'`, make sure you are running commands from the repo root (`.../user-generator`) and not its parent folder.
 
 ## Setup flow (phase-1 foundation)
 
