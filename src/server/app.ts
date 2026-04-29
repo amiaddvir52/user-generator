@@ -51,8 +51,7 @@ const RESOLVABLE_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>([
   "FINGERPRINT_UNKNOWN",
   "TEARDOWN_IDENTITY_UNSURE",
   "TEARDOWN_HOOK_HAS_UNKNOWN_CALL",
-  "WORKING_TREE_DIRTY",
-  "PLAYWRIGHT_INCOMPATIBLE"
+  "WORKING_TREE_DIRTY"
 ]);
 
 const CONFIG_REASONS: ReadonlySet<ReasonCode> = new Set<ReasonCode>([

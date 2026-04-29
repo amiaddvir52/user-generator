@@ -1,6 +1,7 @@
 import { loadRunContext } from "../../common/context.js";
 import { TugError } from "../../common/errors.js";
 import { printResult, writeJsonFile } from "../../common/output.js";
+import { buildPnpmCommand, formatCommandForDisplay } from "../../common/package-manager.js";
 import { buildPlaywrightGrepPattern } from "../../common/playwright.js";
 import { quoteForShellValue } from "../../common/shell.js";
 import { buildExecutionEnv } from "../../common/runtime-env.js";
@@ -127,7 +128,20 @@ export const runRunCommand = async (
 
   try {
     const grepPattern = buildPlaywrightGrepPattern(entry);
-    const resolvedCommand = `pnpm --filter ${preflight.repo.packageName} exec playwright test --config ${pipeline.sandbox.playwrightConfigPath} --grep ${JSON.stringify(grepPattern)} --workers=1`;
+    const resolvedCommand = formatCommandForDisplay(
+      buildPnpmCommand(preflight.repo, [
+        "--filter",
+        preflight.repo.packageName,
+        "exec",
+        "playwright",
+        "test",
+        "--config",
+        pipeline.sandbox.playwrightConfigPath,
+        "--grep",
+        grepPattern,
+        "--workers=1"
+      ])
+    );
 
     const preview = [
       `Selected test: ${entry.testTitle}`,

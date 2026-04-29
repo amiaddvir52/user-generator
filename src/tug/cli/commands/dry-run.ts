@@ -1,6 +1,7 @@
 import { cleanupSandbox } from "../../sandbox/builder.js";
 import { loadRunContext } from "../../common/context.js";
 import { printResult } from "../../common/output.js";
+import { buildPnpmCommand, formatCommandForDisplay } from "../../common/package-manager.js";
 import { buildPlaywrightGrepPattern } from "../../common/playwright.js";
 import { buildExecutionEnv } from "../../common/runtime-env.js";
 import { runPreflightGates } from "../../validate/gates.js";
@@ -53,6 +54,20 @@ export const runDryRunCommand = async (options: {
   });
 
   const grepPattern = buildPlaywrightGrepPattern(entry);
+  const playwrightCommand = formatCommandForDisplay(
+    buildPnpmCommand(preflight.repo, [
+      "--filter",
+      preflight.repo.packageName,
+      "exec",
+      "playwright",
+      "test",
+      "--config",
+      pipeline.sandbox.playwrightConfigPath,
+      "--grep",
+      grepPattern,
+      "--workers=1"
+    ])
+  );
 
   const payload = {
     ok: true,
@@ -63,7 +78,7 @@ export const runDryRunCommand = async (options: {
     confidence: pipeline.transform.confidence,
     removedCalls: pipeline.transform.removedCalls,
     sandboxPath: pipeline.sandbox.path,
-    playwrightCommand: `pnpm --filter ${preflight.repo.packageName} exec playwright test --config ${pipeline.sandbox.playwrightConfigPath} --grep ${JSON.stringify(grepPattern)} --workers=1`,
+    playwrightCommand,
     diff: pipeline.diff
   };
 

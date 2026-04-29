@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import type { RepoHandle } from "../common/types.js";
 import { TugError } from "../common/errors.js";
 import { tugLog } from "../common/logger.js";
+import { buildPnpmCommand } from "../common/package-manager.js";
 import { runShellCommand, type ShellResult } from "../common/shell.js";
 
 export type PlaywrightListResult = {
@@ -27,7 +28,7 @@ const parseListedTests = (stdout: string) => {
 };
 
 const buildListCommand = (repo: RepoHandle, configPath?: string) => {
-  const command = ["pnpm", "--filter", repo.packageName, "exec", "playwright", "test"];
+  const command = buildPnpmCommand(repo, ["--filter", repo.packageName, "exec", "playwright", "test"]);
   if (configPath) command.push("--config", configPath);
   command.push("--list");
   return command;

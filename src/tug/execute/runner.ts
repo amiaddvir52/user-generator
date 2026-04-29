@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 
 import type { RepoHandle, SandboxHandle } from "../common/types.js";
 import { TugError } from "../common/errors.js";
+import { buildPnpmCommand } from "../common/package-manager.js";
 import { CREDENTIAL_MARKER } from "../transform/credential-probe.js";
 import { appendLog, flushBufferedLines, readBufferedLines } from "./stdio.js";
 
@@ -23,8 +24,7 @@ export const runSandboxedTest = async ({
   grepPattern: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<ExecutionResult> => {
-  const command = [
-    "pnpm",
+  const command = buildPnpmCommand(repo, [
     "--filter",
     repo.packageName,
     "exec",
@@ -35,7 +35,7 @@ export const runSandboxedTest = async ({
     "--grep",
     grepPattern,
     "--workers=1"
-  ];
+  ]);
 
   const [, ...args] = command;
 

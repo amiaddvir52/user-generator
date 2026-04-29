@@ -30,6 +30,7 @@ export type RepoHandle = {
   playwrightConfigPath: string;
   tsconfigPath: string;
   lockfilePath?: string;
+  packageManagerCommand?: string[];
   gitSha: string;
   isDirty: boolean;
 };

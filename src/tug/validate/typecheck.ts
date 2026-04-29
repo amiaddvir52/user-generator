@@ -1,5 +1,6 @@
 import type { RepoHandle } from "../common/types.js";
 import { TugError } from "../common/errors.js";
+import { buildPnpmCommand } from "../common/package-manager.js";
 import { runShellCommand } from "../common/shell.js";
 
 const SANDBOX_SPEC_FILENAME = "gen.spec.ts";
@@ -18,7 +19,7 @@ export const runTypecheck = async ({
   tsconfigPath: string;
 }) => {
   const result = await runShellCommand({
-    command: ["pnpm", "exec", "tsc", "--noEmit", "-p", tsconfigPath],
+    command: buildPnpmCommand(repo, ["exec", "tsc", "--noEmit", "-p", tsconfigPath]),
     cwd: repo.smRootPath
   });
 
@@ -39,4 +40,3 @@ export const runTypecheck = async ({
     sandboxSpecErrors.slice(0, 5)
   );
 };
-

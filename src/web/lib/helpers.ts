@@ -42,7 +42,7 @@ export const describeConfirmation = (error: UserGenerationError): string => {
     case "WORKING_TREE_DIRTY":
       return "The automation repo has uncommitted changes.";
     case "PLAYWRIGHT_INCOMPATIBLE":
-      return "The repo's Playwright version is outside the supported window.";
+      return error.message;
     default:
       return error.message;
   }
