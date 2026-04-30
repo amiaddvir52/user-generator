@@ -148,6 +148,11 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
         executionMode: "fast"
       })
     );
+    expect(workflowMocks.runPreflightGates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dryList: false
+      })
+    );
     expect(workflowMocks.runSandboxedTest).toHaveBeenCalledOnce();
   });
 
@@ -201,6 +206,19 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
           confidence: 0.91,
           removedCalls: []
         },
+        validationProof: {
+          fingerprint: "fingerprint-123",
+          sourceFile: "/repo/spec.ts",
+          sourceTextHash: "source-hash",
+          testTitle: "creates user",
+          expectedTitle: "creates user",
+          environment: {
+            environment: null,
+            cloudProvider: null,
+            region: null
+          },
+          coversExecutionModes: ["fast", "full"]
+        },
         sandbox: {
           path: "/tmp/sandbox-fast",
           playwrightConfigPath: "/tmp/playwright.fast.config.ts",
@@ -234,7 +252,12 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
     );
     expect(workflowMocks.transformIntoSandbox).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ executionMode: "full" })
+      expect.objectContaining({
+        executionMode: "full",
+        validationProof: expect.objectContaining({
+          coversExecutionModes: ["fast", "full"]
+        })
+      })
     );
     expect(result.executionMode).toBe("full");
     expect(result.fallbackTriggered).toBe(true);
@@ -242,6 +265,45 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
     expect(result.warnings).toEqual(
       expect.arrayContaining([
         "Fast execution mode fallback triggered: reran in full mode for complete credentials."
+      ])
+    );
+  });
+
+  it("does not rerun full mode when fast mode completed the full flow with unusable credentials", async () => {
+    workflowMocks.parseCredentialExecution.mockReturnValueOnce({
+      events: [],
+      runState: {
+        completedFullFlow: true,
+        partial: false
+      },
+      accounts: {
+        target: {
+          id: "123",
+          fields: {
+            accountId: "123"
+          },
+          sourcePhases: ["final"],
+          provisioningState: "complete",
+          usable: false
+        },
+        secondary: []
+      },
+      warning: undefined
+    });
+
+    const result = await executeUserGeneration({
+      spec: "/repo/spec.ts",
+      test: "creates user",
+      environment: "qa.qa"
+    });
+
+    expect(workflowMocks.runSandboxedTest).toHaveBeenCalledOnce();
+    expect(workflowMocks.transformIntoSandbox).toHaveBeenCalledOnce();
+    expect(result.executionMode).toBe("fast");
+    expect(result.fallbackTriggered).toBe(false);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        "Target account is not fully provisioned or is missing primary credentials."
       ])
     );
   });

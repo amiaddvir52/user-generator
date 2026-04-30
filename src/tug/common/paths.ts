@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 
 import { TugError } from "./errors.js";
@@ -28,7 +29,7 @@ const sanitizeFingerprint = (fingerprint: string) => fingerprint.replace(/[^a-zA
 export const createRunId = (fingerprint: string) => {
   const iso = new Date().toISOString().replace(/[:.]/g, "-");
   const fp = sanitizeFingerprint(fingerprint).slice(0, 12) || "unknown";
-  return `${iso}-${fp}-${process.pid}`;
+  return `${iso}-${fp}-${process.pid}-${randomUUID().slice(0, 8)}`;
 };
 
 export const createSandboxDirectory = async ({

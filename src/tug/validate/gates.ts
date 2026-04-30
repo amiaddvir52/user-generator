@@ -1,6 +1,7 @@
 import { locateRepository } from "../repo/locator.js";
 import { evaluateCompatibility } from "../repo/compatibility.js";
 import { computeFingerprint } from "../repo/fingerprint.js";
+import type { FingerprintInfo, RepoHandle } from "../common/types.js";
 import {
   ensurePlaywrightInstalled,
   ensureWorkingTreeCleanWhenStrict,
@@ -21,6 +22,35 @@ export type PreflightResult = {
   compatibility: Awaited<ReturnType<typeof evaluateCompatibility>>;
   playwrightVersion: string;
   warnings: string[];
+  repoListCacheHit?: boolean;
+};
+
+const fingerprintMemo = new Map<string, Promise<FingerprintInfo>>();
+
+const buildFingerprintMemoKey = (repo: RepoHandle) =>
+  repo.isDirty ? undefined : `${repo.absPath}\0${repo.gitSha}`;
+
+export const clearPreflightMemoForTesting = () => {
+  fingerprintMemo.clear();
+};
+
+const computeFingerprintWithMemo = (repo: RepoHandle) => {
+  const memoKey = buildFingerprintMemoKey(repo);
+  if (!memoKey) {
+    return computeFingerprint(repo);
+  }
+
+  const existing = fingerprintMemo.get(memoKey);
+  if (existing) {
+    return existing;
+  }
+
+  const next = computeFingerprint(repo).catch((error) => {
+    fingerprintMemo.delete(memoKey);
+    throw error;
+  });
+  fingerprintMemo.set(memoKey, next);
+  return next;
 };
 
 export const runPreflightGates = async ({
@@ -39,18 +69,27 @@ export const runPreflightGates = async ({
   const warnings: string[] = [];
   const resolvedRepoPath = await locateRepository(repoPath);
   const repo = await validateRepositoryStructure(resolvedRepoPath);
-  const fingerprint = await computeFingerprint(repo);
-  const compatibility = await evaluateCompatibility({
-    fingerprint,
-    trustUnknown
+  const fingerprintPromise = computeFingerprintWithMemo(repo);
+  const playwrightVersionPromise = ensurePlaywrightInstalled(repo);
+  playwrightVersionPromise.catch(() => undefined);
+  const fingerprint = await fingerprintPromise.catch(async (error) => {
+    await playwrightVersionPromise.catch(() => undefined);
+    throw error;
   });
-  const playwrightVersion = await ensurePlaywrightInstalled(repo);
+  const [compatibility, playwrightVersion] = await Promise.all([
+    evaluateCompatibility({
+      fingerprint,
+      trustUnknown
+    }),
+    playwrightVersionPromise
+  ]);
 
   ensureWorkingTreeCleanWhenStrict(repo, strict);
   if (!strict && repo.isDirty) {
-    warnings.push("Working tree is dirty under e2e-automation/sm-ui-refresh.");
+    warnings.push("Working tree is dirty in automation fingerprint inputs.");
   }
 
+  let repoListCacheHit: boolean | undefined;
   if (dryList) {
     const validationCacheEnabled = resolveValidationCacheEnabled(env);
     const cacheTtlMs = resolveValidationCacheTtlMs({ env });
@@ -73,6 +112,7 @@ export const runPreflightGates = async ({
           key: cacheKey
         })
       : false;
+    repoListCacheHit = cacheHit;
 
     if (!cacheHit) {
       await runPlaywrightList({
@@ -96,6 +136,7 @@ export const runPreflightGates = async ({
     fingerprint,
     compatibility,
     playwrightVersion,
-    warnings
+    warnings,
+    repoListCacheHit
   };
 };

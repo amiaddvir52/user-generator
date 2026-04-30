@@ -202,6 +202,14 @@ export type RunTiming = {
   transformMs: number;
   executeMs: number;
   totalMs: number;
+  preflightMs?: number;
+  indexMs?: number;
+  sandboxBuildMs?: number;
+  sandboxValidationMs?: number;
+  cleanupMs?: number;
+  fallbackMs?: number;
+  repoListCacheHit?: boolean;
+  sandboxValidationCacheHit?: boolean;
 };
 
 export type CommandResult = {

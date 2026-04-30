@@ -48,39 +48,41 @@ export const buildSandbox = async ({
   const setupCacheRoot = resolveSetupCacheRoot();
 
   try {
-    await fs.writeFile(specPath, transform.transformedText, "utf8");
-    await fs.writeFile(
-      setupCacheCaptureScriptPath,
-      generateSetupCacheCaptureScript(),
-      { encoding: "utf8", mode: 0o600 }
-    );
-    await fs.writeFile(
-      setupCachePersistScriptPath,
-      generateSetupCachePersistScript(),
-      { encoding: "utf8", mode: 0o600 }
-    );
-    await fs.writeFile(
-      playwrightConfigPath,
-      generatePlaywrightConfig({
-        baseConfigPath: repo.playwrightConfigPath,
-        fingerprint,
-        setupCacheRoot,
+    await Promise.all([
+      fs.writeFile(specPath, transform.transformedText, "utf8"),
+      fs.writeFile(
         setupCacheCaptureScriptPath,
-        setupCachePersistScriptPath
-      }),
-      "utf8"
-    );
-    await fs.writeFile(
-      tsconfigPath,
-      generateTsConfig({
-        baseTsconfigPath: repo.tsconfigPath
-      }),
-      "utf8"
-    );
-    await fs.writeFile(diffPath, diff, "utf8");
-    await fs.writeFile(runPlanPath, `${JSON.stringify(runPlan, null, 2)}\n`, "utf8");
-    await fs.writeFile(stdoutLogPath, "", "utf8");
-    await fs.writeFile(stderrLogPath, "", "utf8");
+        generateSetupCacheCaptureScript(),
+        { encoding: "utf8", mode: 0o600 }
+      ),
+      fs.writeFile(
+        setupCachePersistScriptPath,
+        generateSetupCachePersistScript(),
+        { encoding: "utf8", mode: 0o600 }
+      ),
+      fs.writeFile(
+        playwrightConfigPath,
+        generatePlaywrightConfig({
+          baseConfigPath: repo.playwrightConfigPath,
+          fingerprint,
+          setupCacheRoot,
+          setupCacheCaptureScriptPath,
+          setupCachePersistScriptPath
+        }),
+        "utf8"
+      ),
+      fs.writeFile(
+        tsconfigPath,
+        generateTsConfig({
+          baseTsconfigPath: repo.tsconfigPath
+        }),
+        "utf8"
+      ),
+      fs.writeFile(diffPath, diff, "utf8"),
+      fs.writeFile(runPlanPath, `${JSON.stringify(runPlan, null, 2)}\n`, "utf8"),
+      fs.writeFile(stdoutLogPath, "", "utf8"),
+      fs.writeFile(stderrLogPath, "", "utf8")
+    ]);
     await fs.symlink(repoNodeModulesPath, nodeModulesLinkPath, "junction");
   } catch (error) {
     await removeSandboxDirectory(sandboxPath).catch(() => undefined);

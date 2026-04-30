@@ -86,7 +86,15 @@ const RunHistoryEntrySchema = z.object({
       selectionMs: z.number().nonnegative(),
       transformMs: z.number().nonnegative(),
       executeMs: z.number().nonnegative(),
-      totalMs: z.number().nonnegative()
+      totalMs: z.number().nonnegative(),
+      preflightMs: z.number().nonnegative().optional(),
+      indexMs: z.number().nonnegative().optional(),
+      sandboxBuildMs: z.number().nonnegative().optional(),
+      sandboxValidationMs: z.number().nonnegative().optional(),
+      cleanupMs: z.number().nonnegative().optional(),
+      fallbackMs: z.number().nonnegative().optional(),
+      repoListCacheHit: z.boolean().optional(),
+      sandboxValidationCacheHit: z.boolean().optional()
     }).optional(),
     fastPathTriggered: z.boolean().optional(),
     warnings: z.array(z.string())

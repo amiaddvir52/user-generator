@@ -9,7 +9,12 @@ import { ensureRequiredEnvironment } from "../tug/validate/env-check.js";
 import { runPreflightGates } from "../tug/validate/gates.js";
 import { runSandboxedTest } from "../tug/execute/runner.js";
 import { parseCredentialExecution } from "../tug/execute/output-parser.js";
-import { findEntryBySpecAndTitle, getOrBuildIndex, transformIntoSandbox } from "../tug/cli/workflow.js";
+import {
+  findEntryBySpecAndTitle,
+  getOrBuildIndex,
+  transformIntoSandbox,
+  type SandboxValidationProof
+} from "../tug/cli/workflow.js";
 import { isTugError, TugError } from "../tug/common/errors.js";
 import { enableRcpMockAndWait } from "./rcp-mock.js";
 import type {
@@ -33,6 +38,7 @@ export type UserGenerationInput = {
   strict?: boolean;
   executionMode?: ExecutionMode;
   allowAutoFallback?: boolean;
+  executionGate?: <T>(key: string, work: () => Promise<T>) => Promise<T>;
 };
 
 export type UserGenerationPayload = {
@@ -108,20 +114,30 @@ const runUserGeneration = async (
   const requestedExecutionMode: ExecutionMode = input.executionMode ?? "fast";
   const allowAutoFallback = input.allowAutoFallback ?? true;
 
+  const preflightStartedAt = Date.now();
   const preflight = await runPreflightGates({
     repoPath: context.repoPath,
     strict: Boolean(input.strict),
     trustUnknown: Boolean(input.trustUnknown),
-    dryList: true,
+    dryList: false,
     env: executionEnv
   });
+  const preflightMs = Date.now() - preflightStartedAt;
 
+  const indexStartedAt = Date.now();
   const { index } = await getOrBuildIndex({
     repo: preflight.repo,
     fingerprint: preflight.fingerprint.fingerprint,
     compatibility: preflight.compatibility,
-    forceReindex: Boolean(input.reindex)
+    forceReindex: Boolean(input.reindex),
+    selectionHint: input.spec && input.test
+      ? {
+          spec: input.spec,
+          title: input.test
+        }
+      : undefined
   });
+  const indexMs = Date.now() - indexStartedAt;
   const selectionStartedAt = Date.now();
 
   let entry;
@@ -152,10 +168,12 @@ const runUserGeneration = async (
 
   const executeAttempt = async ({
     executionMode,
-    cleanupOnFailure
+    cleanupOnFailure,
+    validationProof
   }: {
     executionMode: ExecutionMode;
     cleanupOnFailure: boolean;
+    validationProof?: SandboxValidationProof;
   }) => {
     const transformStartedAt = Date.now();
     const pipeline = await transformIntoSandbox({
@@ -166,37 +184,62 @@ const runUserGeneration = async (
       index,
       interactiveConfirm: Boolean(input.trustUncertainTeardown),
       executionMode,
-      env: executionEnv
+      env: executionEnv,
+      validationProof
     });
     const transformMs = Date.now() - transformStartedAt;
 
     let cleanupAfterSuccess = !input.keepSandbox;
+    let attemptSucceeded = false;
+    let cleanupMs = 0;
     try {
       const grepPattern = buildPlaywrightGrepPattern(entry);
+      await resolveRcpMock();
       const executeStartedAt = Date.now();
-      const execution = await runSandboxedTest({
+      const executionGate = input.executionGate ?? (async <T>(_key: string, work: () => Promise<T>) => work());
+      const executionKey = `${preflight.repo.absPath}\0${context.environment ?? ""}`;
+      const execution = await executionGate(executionKey, () => runSandboxedTest({
         repo: preflight.repo,
         sandbox: pipeline.sandbox,
         grepPattern,
         env: executionEnv
-      });
-      const credentialExecution = parseCredentialExecution(execution.markerLines);
+      }));
+      let credentialExecution: ReturnType<typeof parseCredentialExecution>;
+      try {
+        credentialExecution = parseCredentialExecution(execution.markerLines);
+      } catch (error) {
+        if (executionMode === "fast" && isTugError(error) && error.reason === "CREDENTIAL_MARKER_MISSING") {
+          (error as TugError & { validationProof?: SandboxValidationProof }).validationProof =
+            pipeline.validationProof;
+        }
+        throw error;
+      }
       const executeMs = Date.now() - executeStartedAt;
 
-      if (executionMode === "fast" && !credentialExecution.accounts.target?.usable) {
-        throw new TugError(
+      if (
+        executionMode === "fast" &&
+        !credentialExecution.accounts.target?.usable &&
+        !credentialExecution.runState.completedFullFlow
+      ) {
+        const error = new TugError(
           "CREDENTIAL_MARKER_MISSING",
           "Fast execution mode completed without complete primary credentials (email/password)."
         );
+        (error as TugError & { validationProof?: SandboxValidationProof }).validationProof =
+          pipeline.validationProof;
+        throw error;
       }
 
+      attemptSucceeded = true;
       return {
         executionMode,
         pipeline,
         credentialExecution,
         timing: {
           transformMs,
-          executeMs
+          executeMs,
+          cleanupMs,
+          ...pipeline.timing
         }
       };
     } catch (error) {
@@ -208,7 +251,13 @@ const runUserGeneration = async (
       throw error;
     } finally {
       if (cleanupAfterSuccess) {
-        await cleanupSandbox(pipeline.sandbox);
+        const cleanupStartedAt = Date.now();
+        if (attemptSucceeded) {
+          void cleanupSandbox(pipeline.sandbox).catch(() => undefined);
+        } else {
+          await cleanupSandbox(pipeline.sandbox);
+          cleanupMs = Date.now() - cleanupStartedAt;
+        }
       }
     }
   };
@@ -224,17 +273,46 @@ const runUserGeneration = async (
     timing: {
       transformMs: number;
       executeMs: number;
+      cleanupMs?: number;
+      sandboxBuildMs?: number;
+      sandboxValidationMs?: number;
+      sandboxValidationCacheHit?: boolean;
     };
   };
 
+  type RcpMockResult =
+    | { ok: true; runId: number; runUrl: string }
+    | { ok: false; error: unknown };
+  let rcpMockPromise: Promise<RcpMockResult> | undefined;
+  const resolveRcpMock = async () => {
+    if (!rcpMockPromise || rcpMockRunUrl) {
+      return;
+    }
+
+    const rcpMockRun = await rcpMockPromise;
+    if (!rcpMockRun.ok) {
+      throw rcpMockRun.error;
+    }
+    rcpMockRunUrl = rcpMockRun.runUrl;
+    tugLog("run.rcpMock.ready", {
+      runId: rcpMockRun.runId,
+      runUrl: rcpMockRun.runUrl
+    });
+  };
+  let fallbackMs: number | undefined;
+
   try {
     if (input.enableRcpMock) {
-      const rcpMockRun = await enableRcpMockAndWait();
-      rcpMockRunUrl = rcpMockRun.runUrl;
-      tugLog("run.rcpMock.ready", {
-        runId: rcpMockRun.runId,
-        runUrl: rcpMockRun.runUrl
-      });
+      rcpMockPromise = enableRcpMockAndWait()
+        .then((run): RcpMockResult => ({
+          ok: true,
+          runId: run.runId,
+          runUrl: run.runUrl
+        }))
+        .catch((error): RcpMockResult => ({
+          ok: false,
+          error
+        }));
     }
 
     let attemptResult: ExecutionAttemptResult;
@@ -256,10 +334,13 @@ const runUserGeneration = async (
         fallbackTriggered = true;
         resolvedExecutionMode = "full";
         fallbackWarning = "Fast execution mode fallback triggered: reran in full mode for complete credentials.";
+        const fallbackStartedAt = Date.now();
         attemptResult = await executeAttempt({
           executionMode: "full",
-          cleanupOnFailure: false
+          cleanupOnFailure: false,
+          validationProof: (error as TugError & { validationProof?: SandboxValidationProof }).validationProof
         });
+        fallbackMs = Date.now() - fallbackStartedAt;
       }
     } else {
       attemptResult = await executeAttempt({
@@ -290,7 +371,15 @@ const runUserGeneration = async (
       selectionMs,
       transformMs: attemptResult.timing.transformMs,
       executeMs: attemptResult.timing.executeMs,
-      totalMs: Date.now() - totalStartedAt
+      totalMs: Date.now() - totalStartedAt,
+      preflightMs,
+      indexMs,
+      sandboxBuildMs: attemptResult.timing.sandboxBuildMs,
+      sandboxValidationMs: attemptResult.timing.sandboxValidationMs,
+      cleanupMs: attemptResult.timing.cleanupMs,
+      fallbackMs,
+      repoListCacheHit: preflight.repoListCacheHit,
+      sandboxValidationCacheHit: attemptResult.timing.sandboxValidationCacheHit
     };
     const fastPathTriggered =
       resolvedExecutionMode === "fast" &&

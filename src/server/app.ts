@@ -77,11 +77,18 @@ const statusForReason = (reason: ReasonCode): number => {
   return 500;
 };
 
-const createSerialQueue = () => {
-  let tail: Promise<unknown> = Promise.resolve();
-  return async <T>(work: () => Promise<T>): Promise<T> => {
-    const next = tail.then(work, work);
-    tail = next.catch(() => undefined);
+const createExecutionScheduler = () => {
+  const tails = new Map<string, Promise<unknown>>();
+  return async <T>(key: string, work: () => Promise<T>): Promise<T> => {
+    const previous = tails.get(key) ?? Promise.resolve();
+    const next = previous.then(work, work);
+    const guarded = next.catch(() => undefined);
+    tails.set(key, guarded);
+    guarded.finally(() => {
+      if (tails.get(key) === guarded) {
+        tails.delete(key);
+      }
+    });
     return next;
   };
 };
@@ -320,7 +327,7 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
   const providerCatalogBuilder = services.buildProviderCatalog ?? buildProviderCatalog;
   const providerExecutor = services.executeProviderPrompt ?? executeProviderPrompt;
   const userGenerationExecutor = services.executeUserGeneration ?? executeUserGeneration;
-  const runQueue = createSerialQueue();
+  const executionScheduler = createExecutionScheduler();
 
   const getSnapshot = async (): Promise<ConfigResponse> => {
     const loadResult = await configStore.load();
@@ -584,21 +591,20 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
     const reindex = parsedBody.data.reindex ?? false;
 
     try {
-      const payload = await runQueue(() =>
-        userGenerationExecutor({
-          prompt: parsedBody.data.prompt,
-          spec: parsedBody.data.spec,
-          test: parsedBody.data.test,
-          environment: normalizedEnvironment,
-          executionMode,
-          allowAutoFallback,
-          enableRcpMock,
-          trustUnknown,
-          trustUncertainTeardown,
-          keepSandbox,
-          reindex
-        })
-      );
+      const payload = await userGenerationExecutor({
+        prompt: parsedBody.data.prompt,
+        spec: parsedBody.data.spec,
+        test: parsedBody.data.test,
+        environment: normalizedEnvironment,
+        executionMode,
+        allowAutoFallback,
+        enableRcpMock,
+        trustUnknown,
+        trustUncertainTeardown,
+        keepSandbox,
+        reindex,
+        executionGate: executionScheduler
+      });
 
       const response: UserGenerationResponse = {
         fingerprint: payload.fingerprint,

@@ -159,6 +159,41 @@ export const createProjectForSpecs = async (repo: RepoHandle) => {
   return project;
 };
 
+const collectEntriesFromSourceFile = (sourceFile: SourceFile) => {
+  const entries: SpecIndexEntry[] = [];
+  const helperImports = collectHelperImports(sourceFile);
+  collectEntriesFromNode({
+    node: sourceFile,
+    sourceFile,
+    describeStack: [],
+    helperImports,
+    out: entries
+  });
+  return entries;
+};
+
+export const listSpecFiles = (repo: RepoHandle) => walkForSpecs(repo.smRootPath);
+
+export const buildSpecEntriesForFile = async ({
+  repo,
+  filePath
+}: {
+  repo: RepoHandle;
+  filePath: string;
+}) => {
+  const project = new Project({
+    tsConfigFilePath: repo.tsconfigPath,
+    skipFileDependencyResolution: true
+  });
+  const sourceFile = project.addSourceFileAtPath(filePath);
+  return collectEntriesFromSourceFile(sourceFile).sort((left, right) => {
+    if (left.filePath === right.filePath) {
+      return left.testTitle.localeCompare(right.testTitle);
+    }
+    return left.filePath.localeCompare(right.filePath);
+  });
+};
+
 export const buildSpecIndex = async ({
   repo,
   fingerprint,
@@ -172,14 +207,7 @@ export const buildSpecIndex = async ({
 
   const entries: SpecIndexEntry[] = [];
   project.getSourceFiles().forEach((sourceFile) => {
-    const helperImports = collectHelperImports(sourceFile);
-    collectEntriesFromNode({
-      node: sourceFile,
-      sourceFile,
-      describeStack: [],
-      helperImports,
-      out: entries
-    });
+    entries.push(...collectEntriesFromSourceFile(sourceFile));
   });
 
   const teardown = discoverTeardownIdentifiers({
@@ -199,4 +227,19 @@ export const buildSpecIndex = async ({
     }),
     teardown
   };
+};
+
+export const buildTeardownIndex = async ({
+  repo,
+  compatibility
+}: {
+  repo: RepoHandle;
+  compatibility: CompatibilityResult;
+}) => {
+  const project = await createProjectForSpecs(repo);
+  return discoverTeardownIdentifiers({
+    project,
+    compatibilityStatus: compatibility.status,
+    teardownHints: compatibility.knownTeardownHints
+  });
 };

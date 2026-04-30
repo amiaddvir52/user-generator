@@ -154,7 +154,107 @@ describe("transformIntoSandbox", () => {
 
     expect(workflowMocks.buildSandbox).toHaveBeenCalledOnce();
     expect(workflowMocks.cleanupSandbox).toHaveBeenCalledWith(sandbox);
-    expect(workflowMocks.runPlaywrightList).not.toHaveBeenCalled();
+    expect(workflowMocks.runPlaywrightList).toHaveBeenCalledOnce();
+  });
+
+  it("reuses a fast validation proof for full-mode fallback validation", async () => {
+    const workspace = await createTempDir();
+    const specPath = await writeFile(
+      workspace,
+      "account.spec.ts",
+      [
+        "declare const test: any;",
+        "declare const expect: any;",
+        "",
+        "test.describe('Accounts', () => {",
+        "  test('creates account', async () => {",
+        "    expect(1).toBe(1);",
+        "  });",
+        "});"
+      ].join("\n")
+    );
+
+    const sandbox = (name: string): SandboxHandle => ({
+      path: path.join(workspace, name),
+      specPath: path.join(workspace, name, "gen.spec.ts"),
+      playwrightConfigPath: path.join(workspace, name, "playwright.gen.config.ts"),
+      tsconfigPath: path.join(workspace, name, "tsconfig.gen.json"),
+      diffPath: path.join(workspace, name, "diff.patch"),
+      runPlanPath: path.join(workspace, name, "run-plan.json"),
+      stdoutLogPath: path.join(workspace, name, "stdout.log"),
+      stderrLogPath: path.join(workspace, name, "stderr.log")
+    });
+
+    workflowMocks.buildSandbox
+      .mockResolvedValueOnce(sandbox("sandbox-fast"))
+      .mockResolvedValueOnce(sandbox("sandbox-full"));
+    workflowMocks.runTypecheck.mockResolvedValue(undefined);
+    workflowMocks.runPlaywrightList.mockResolvedValue({
+      rawOutput: "",
+      tests: ["Accounts › creates account"]
+    });
+
+    const { transformIntoSandbox } = await import("../src/tug/cli/workflow.js");
+
+    const entry: SpecIndexEntry = {
+      filePath: specPath,
+      testTitle: "creates account",
+      describeTitles: ["Accounts"],
+      tags: [],
+      helperImports: [],
+      teardownCalls: [],
+      scoreHints: {}
+    };
+    const index: IndexData = {
+      fingerprint: "fp_test123",
+      generatedAt: new Date().toISOString(),
+      entries: [entry],
+      teardown: {
+        confirmed: [],
+        suspected: [],
+        scores: [],
+        observedHookCalls: []
+      }
+    };
+    const repo: RepoHandle = {
+      absPath: workspace,
+      smRootPath: workspace,
+      packageName: "@test/repo",
+      packageVersion: "1.0.0",
+      playwrightConfigPath: path.join(workspace, "playwright.config.ts"),
+      tsconfigPath: path.join(workspace, "tsconfig.json"),
+      gitSha: "abc123",
+      isDirty: false
+    };
+    const compatibility: CompatibilityResult = {
+      status: "supported",
+      fingerprint: "fp_test123",
+      knownTeardownHints: []
+    };
+
+    const fastPipeline = await transformIntoSandbox({
+      entry,
+      repo,
+      fingerprint: "fp_test123",
+      compatibility,
+      index,
+      interactiveConfirm: false,
+      executionMode: "fast"
+    });
+
+    await transformIntoSandbox({
+      entry,
+      repo,
+      fingerprint: "fp_test123",
+      compatibility,
+      index,
+      interactiveConfirm: false,
+      executionMode: "full",
+      validationProof: fastPipeline.validationProof
+    });
+
+    expect(workflowMocks.runTypecheck).toHaveBeenCalledOnce();
+    expect(workflowMocks.runPlaywrightList).toHaveBeenCalledOnce();
   });
 });
 

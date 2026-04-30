@@ -63,7 +63,9 @@ const getIsDirty = async (repoPath: string) => {
       "status",
       "--porcelain",
       "--",
-      "e2e-automation/sm-ui-refresh"
+      "e2e-automation/sm-ui-refresh",
+      "pnpm-lock.yaml",
+      "package-lock.json"
     ]);
     return stdout.trim().length > 0;
   } catch {
@@ -214,7 +216,7 @@ export const ensureWorkingTreeCleanWhenStrict = (repo: RepoHandle, strict: boole
   if (strict && repo.isDirty) {
     throw new TugError(
       "WORKING_TREE_DIRTY",
-      "Working tree is dirty under e2e-automation/sm-ui-refresh (blocked by --strict)."
+      "Working tree is dirty in automation fingerprint inputs (blocked by --strict)."
     );
   }
 };

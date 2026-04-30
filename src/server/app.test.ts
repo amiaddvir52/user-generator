@@ -553,6 +553,54 @@ describe("user generation API", () => {
     return { app, repoDir };
   };
 
+  const successfulUserGenerationPayload = (title = "creates user") => ({
+    ok: true,
+    fingerprint: "fp-123",
+    compatibility: "supported" as const,
+    selectedTest: { filePath: "/tmp/spec.ts", title },
+    environment: "qa.qa",
+    executionMode: "fast" as const,
+    fallbackTriggered: false,
+    confidence: 0.95,
+    removedCalls: [],
+    sandboxPath: "/tmp/sandbox",
+    accounts: {
+      target: {
+        id: "a@b.com",
+        fields: { email: "a@b.com", password: "secret" },
+        sourcePhases: ["final" as const],
+        provisioningState: "complete" as const,
+        usable: true
+      },
+      secondary: []
+    },
+    runState: {
+      completedFullFlow: true,
+      partial: false
+    },
+    warnings: []
+  });
+
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve;
+      reject = promiseReject;
+    });
+    return { promise, resolve, reject };
+  };
+
+  const waitFor = async (predicate: () => boolean) => {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (predicate()) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error("Timed out waiting for condition.");
+  };
+
   it("returns credentials on success and invokes the executor with saved config", async () => {
     const executeUserGeneration = vi.fn().mockResolvedValue({
       ok: true,
@@ -979,6 +1027,63 @@ describe("user generation API", () => {
     expect(historyResponse.json()).toMatchObject({
       entries: [expect.objectContaining({ result: expect.objectContaining({ fingerprint: "fp-123" }) })]
     });
+
+    await app.close();
+  });
+
+  it("allows concurrent preparation while serializing only the execution gate", async () => {
+    const firstExecutionStarted = deferred<void>();
+    const releaseFirstExecution = deferred<void>();
+    const phases: string[] = [];
+
+    const executeUserGeneration = vi.fn().mockImplementation(
+      async ({
+        prompt,
+        executionGate
+      }: {
+        prompt?: string;
+        executionGate: <T>(key: string, work: () => Promise<T>) => Promise<T>;
+      }) => {
+        phases.push(`prepare:${prompt}`);
+        await executionGate("same-repo-env", async () => {
+          phases.push(`execute:${prompt}`);
+          if (prompt === "first") {
+            firstExecutionStarted.resolve();
+            await releaseFirstExecution.promise;
+          }
+        });
+        return successfulUserGenerationPayload(`creates ${prompt}`);
+      }
+    );
+
+    const { app } = await buildConfiguredApp(executeUserGeneration);
+
+    const first = app.inject({
+      method: "POST",
+      url: "/api/run",
+      payload: { prompt: "first" }
+    });
+    await firstExecutionStarted.promise;
+
+    const second = app.inject({
+      method: "POST",
+      url: "/api/run",
+      payload: { prompt: "second" }
+    });
+    await waitFor(() => phases.includes("prepare:second"));
+
+    expect(phases).toContain("prepare:second");
+    expect(phases).not.toContain("execute:second");
+
+    releaseFirstExecution.resolve();
+    await Promise.all([first, second]);
+
+    expect(phases).toEqual([
+      "prepare:first",
+      "execute:first",
+      "prepare:second",
+      "execute:second"
+    ]);
 
     await app.close();
   });
