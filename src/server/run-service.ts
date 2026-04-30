@@ -63,7 +63,6 @@ export type UserGenerationPayload = {
   accounts: GeneratedAccounts;
   runState: RunState;
   timing?: RunTiming;
-  fastPathTriggered?: boolean;
   warnings: string[];
 };
 
@@ -381,12 +380,6 @@ const runUserGeneration = async (
       repoListCacheHit: preflight.repoListCacheHit,
       sandboxValidationCacheHit: attemptResult.timing.sandboxValidationCacheHit
     };
-    const fastPathTriggered =
-      resolvedExecutionMode === "fast" &&
-      attemptResult.credentialExecution.runState.partial &&
-      attemptResult.credentialExecution.runState.exitPhase === "fast-early-return" &&
-      Boolean(attemptResult.credentialExecution.accounts.target?.usable);
-
     tugLog("run.done", {
       fingerprint: preflight.fingerprint.fingerprint,
       sandboxPath: attemptResult.pipeline.sandbox.path,
@@ -394,7 +387,6 @@ const runUserGeneration = async (
       testTitle: entry.testTitle,
       executionMode: resolvedExecutionMode,
       fallbackTriggered,
-      fastPathTriggered,
       timing
     });
 
@@ -416,7 +408,6 @@ const runUserGeneration = async (
       accounts: attemptResult.credentialExecution.accounts,
       runState: attemptResult.credentialExecution.runState,
       timing,
-      fastPathTriggered,
       warnings
     };
   } catch (error) {

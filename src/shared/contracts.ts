@@ -56,7 +56,7 @@ export type UserGenerationCredentials = {
   [key: string]: string | undefined;
 };
 
-export type UserGenerationSnapshotPhase = "entry" | "fast-early-return" | "final";
+export type UserGenerationSnapshotPhase = "entry" | "final";
 export type UserGenerationProvisioningState = "complete" | "partial";
 
 export type UserGenerationAccount = {
@@ -119,7 +119,6 @@ export type UserGenerationResponse = {
   accounts: UserGenerationAccounts;
   runState: UserGenerationRunState;
   timing?: UserGenerationTiming;
-  fastPathTriggered?: boolean;
   warnings: string[];
 };
 
@@ -163,7 +162,6 @@ export type RunHistoryResultSnapshot = Pick<
   | "accounts"
   | "runState"
   | "timing"
-  | "fastPathTriggered"
   | "warnings"
 >;
 

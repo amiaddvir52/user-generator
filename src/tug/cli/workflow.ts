@@ -472,34 +472,13 @@ export const transformIntoSandbox = async ({
         ...validationEnvironment
       }
     });
-    const fastCoversFullValidationCacheKey = buildValidationCacheKey({
-      kind: "sandbox-validation",
-      components: {
-        version: 2,
-        coverage: "fast-covers-full",
-        fingerprint,
-        sourceFile: entry.filePath.replace(/\\/g, "/"),
-        sourceTextHash,
-        testTitle: entry.testTitle,
-        expectedTitle,
-        ...validationEnvironment
-      }
-    });
     const sandboxValidationExactCacheHit = canUseValidationCache
       ? await isValidationCacheHit({
           kind: "sandbox-validation",
           key: sandboxValidationCacheKey
         })
       : false;
-    const sandboxValidationSupersetCacheHit =
-      canUseValidationCache && executionMode === "full" && !sandboxValidationExactCacheHit
-        ? await isValidationCacheHit({
-            kind: "sandbox-validation",
-            key: fastCoversFullValidationCacheKey
-          })
-        : false;
-    sandboxValidationCacheHit =
-      sandboxValidationExactCacheHit || sandboxValidationSupersetCacheHit;
+    sandboxValidationCacheHit = sandboxValidationExactCacheHit;
 
     const proofMatches = Boolean(
       validationProof &&
@@ -522,7 +501,6 @@ export const transformIntoSandbox = async ({
       cacheAllowed: canUseValidationCache,
       cacheHit: sandboxValidationCacheHit,
       exactCacheHit: sandboxValidationExactCacheHit,
-      supersetCacheHit: sandboxValidationSupersetCacheHit,
       proofHit: validationCoveredByProof
     });
 
@@ -562,25 +540,13 @@ export const transformIntoSandbox = async ({
 
     if (
       canUseValidationCache &&
-      (!sandboxValidationExactCacheHit || validationCoveredByProof || executionMode === "fast")
+      (!sandboxValidationExactCacheHit || validationCoveredByProof)
     ) {
-      const cacheWrites = [
-        writeValidationCacheHit({
-          kind: "sandbox-validation",
-          key: sandboxValidationCacheKey,
-          ttlMs: validationCacheTtlMs
-        })
-      ];
-      if (executionMode === "fast") {
-        cacheWrites.push(
-          writeValidationCacheHit({
-            kind: "sandbox-validation",
-            key: fastCoversFullValidationCacheKey,
-            ttlMs: validationCacheTtlMs
-          })
-        );
-      }
-      await Promise.all(cacheWrites);
+      await writeValidationCacheHit({
+        kind: "sandbox-validation",
+        key: sandboxValidationCacheKey,
+        ttlMs: validationCacheTtlMs
+      });
     }
 
     sandboxValidationCacheHit = sandboxValidationCacheHit || validationCoveredByProof;
@@ -592,7 +558,7 @@ export const transformIntoSandbox = async ({
       testTitle: entry.testTitle,
       expectedTitle,
       environment: validationEnvironment,
-      coversExecutionModes: executionMode === "fast" ? ["fast", "full"] : ["full"]
+      coversExecutionModes: [executionMode]
     };
   } catch (error) {
     if (sandbox) {

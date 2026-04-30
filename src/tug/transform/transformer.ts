@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { Node, Project, SyntaxKind, type CallExpression, type Statement } from "ts-morph";
+import { Node, Project, SyntaxKind, type CallExpression, type Expression, type Statement } from "ts-morph";
 
 import { TugError } from "../common/errors.js";
 import type {
@@ -11,16 +11,13 @@ import type {
   TransformResult
 } from "../common/types.js";
 import { computeTransformConfidence } from "./confidence.js";
-import {
-  credentialProbeStatements,
-  earlyReturnCredentialProbeStatements,
-  entryCredentialProbeStatements
-} from "./credential-probe.js";
+import { credentialProbeStatements, entryCredentialProbeStatements } from "./credential-probe.js";
 import { removeUnusedImportedSpecifiers, rewriteRelativeImportsToAbsolute } from "./import-rewriter.js";
 
 const AFTER_HOOK_PATTERN = /(^|\.)(afterEach|afterAll|beforeAll)$/;
 const BEFORE_EACH_PATTERN = /(^|\.)beforeEach$/;
 const TEST_PATTERN = /(^|\.)test(?:\.(only|skip|fixme|fail))?$/;
+const ASSERTION_SUPPRESSED_COMMENT = "/* tug: assertion suppressed */";
 
 const getCalleeIdentifierFromCall = (callExpression: CallExpression) => {
   const expression = callExpression.getExpression();
@@ -86,6 +83,139 @@ const getFunctionBodyBlock = (callExpression: CallExpression) => {
     callback,
     body
   };
+};
+
+const unwrapExpression = (expression: Expression): Expression => {
+  if (
+    Node.isParenthesizedExpression(expression) ||
+    Node.isAsExpression(expression) ||
+    Node.isTypeAssertion(expression) ||
+    Node.isNonNullExpression(expression) ||
+    Node.isSatisfiesExpression(expression)
+  ) {
+    return unwrapExpression(expression.getExpression());
+  }
+
+  return expression;
+};
+
+const unwrapAwaitedAssertionExpression = (expression: Expression): Expression => {
+  const unwrapped = unwrapExpression(expression);
+  if (Node.isAwaitExpression(unwrapped)) {
+    return unwrapExpression(unwrapped.getExpression());
+  }
+
+  return unwrapped;
+};
+
+const isExpectRootExpression = (expression: Expression): boolean => {
+  const unwrapped = unwrapExpression(expression);
+  if (Node.isIdentifier(unwrapped)) {
+    return unwrapped.getText() === "expect";
+  }
+
+  if (Node.isPropertyAccessExpression(unwrapped) || Node.isElementAccessExpression(unwrapped)) {
+    return isExpectRootExpression(unwrapped.getExpression());
+  }
+
+  return false;
+};
+
+const expressionChainContainsExpectCall = (expression: Expression): boolean => {
+  const unwrapped = unwrapExpression(expression);
+  if (Node.isCallExpression(unwrapped)) {
+    return (
+      isExpectRootExpression(unwrapped.getExpression()) ||
+      expressionChainContainsExpectCall(unwrapped.getExpression())
+    );
+  }
+
+  if (Node.isPropertyAccessExpression(unwrapped) || Node.isElementAccessExpression(unwrapped)) {
+    return expressionChainContainsExpectCall(unwrapped.getExpression());
+  }
+
+  return false;
+};
+
+const isExpectAssertionExpression = (expression: Expression) =>
+  expressionChainContainsExpectCall(unwrapAwaitedAssertionExpression(expression));
+
+const isAssignmentOperator = (kind: SyntaxKind) =>
+  kind >= SyntaxKind.FirstAssignment && kind <= SyntaxKind.LastAssignment;
+
+const containsPreservableSideEffect = (node: Node): boolean => {
+  if (
+    Node.isCallExpression(node) ||
+    Node.isAwaitExpression(node) ||
+    Node.isDeleteExpression(node) ||
+    Node.isNewExpression(node) ||
+    Node.isPostfixUnaryExpression(node)
+  ) {
+    return true;
+  }
+
+  if (Node.isPrefixUnaryExpression(node)) {
+    const operator = node.getOperatorToken();
+    return (
+      operator === SyntaxKind.PlusPlusToken ||
+      operator === SyntaxKind.MinusMinusToken
+    );
+  }
+
+  if (Node.isBinaryExpression(node) && isAssignmentOperator(node.getOperatorToken().getKind())) {
+    return true;
+  }
+
+  return node.getChildren().some((child) => containsPreservableSideEffect(child));
+};
+
+const getPreservableArgumentExpression = (argument: Node): Expression | undefined => {
+  if (Node.isSpreadElement(argument)) {
+    return argument.getExpression();
+  }
+
+  return Node.isExpression(argument) ? argument : undefined;
+};
+
+const collectPreservedAssertionExpressions = (expression: Expression, preserved: string[]) => {
+  const unwrapped = unwrapAwaitedAssertionExpression(expression);
+  if (Node.isCallExpression(unwrapped)) {
+    collectPreservedAssertionExpressions(unwrapped.getExpression(), preserved);
+    unwrapped.getArguments().forEach((argument) => {
+      const argumentExpression = getPreservableArgumentExpression(argument);
+      if (argumentExpression && containsPreservableSideEffect(argumentExpression)) {
+        preserved.push(argumentExpression.getText());
+      }
+    });
+    return;
+  }
+
+  if (Node.isPropertyAccessExpression(unwrapped) || Node.isElementAccessExpression(unwrapped)) {
+    collectPreservedAssertionExpressions(unwrapped.getExpression(), preserved);
+  }
+};
+
+const buildSuppressedAssertionStatement = (preservedExpressions: string[]) => {
+  if (preservedExpressions.length === 0) {
+    return `${ASSERTION_SUPPRESSED_COMMENT} void 0;`;
+  }
+
+  return `${ASSERTION_SUPPRESSED_COMMENT} void (${preservedExpressions
+    .map((expression) => `(${expression})`)
+    .join(", ")});`;
+};
+
+const suppressAssertionStatements = (block: import("ts-morph").Block) => {
+  block.getDescendantsOfKind(SyntaxKind.ExpressionStatement).forEach((statement) => {
+    const expression = statement.getExpression();
+    if (!isExpectAssertionExpression(expression)) {
+      return;
+    }
+
+    const preservedExpressions: string[] = [];
+    collectPreservedAssertionExpressions(expression, preservedExpressions);
+    statement.replaceWithText(buildSuppressedAssertionStatement(preservedExpressions));
+  });
 };
 
 const removeDirectTeardownStatements = ({
@@ -275,10 +405,11 @@ export const transformSelectedSpec = async ({
     );
   }
 
-  const preludeStatements = executionMode === "fast"
-    ? [...entryCredentialProbeStatements(), ...earlyReturnCredentialProbeStatements()]
-    : entryCredentialProbeStatements();
-  selectedTestBody.insertStatements(0, preludeStatements.join("\n"));
+  if (executionMode === "fast") {
+    suppressAssertionStatements(selectedTestBody);
+  }
+
+  selectedTestBody.insertStatements(0, entryCredentialProbeStatements().join("\n"));
   selectedTestBody.addStatements(credentialProbeStatements().join("\n"));
 
   rewriteRelativeImportsToAbsolute({

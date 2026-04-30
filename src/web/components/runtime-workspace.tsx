@@ -22,6 +22,7 @@ type RuntimeWorkspaceProps = {
   generationError: GenerationErrorState | null;
   generationPrompt: string;
   generationResult: UserGenerationResponse | null;
+  isFastMode: boolean;
   isAdvancedOpen: boolean;
   isExecuting: boolean;
   isGenerating: boolean;
@@ -31,6 +32,7 @@ type RuntimeWorkspaceProps = {
   onDownloadResult: () => void;
   onEnableRcpMockChange: (value: boolean) => void;
   onExecutePrompt: () => void;
+  onFastModeChange: (value: boolean) => void;
   onGenerationPromptChange: (value: string) => void;
   onGenerateUser: () => void;
   onKeepSandboxChange: (value: boolean) => void;
@@ -53,6 +55,7 @@ export const RuntimeWorkspace = ({
   generationError,
   generationPrompt,
   generationResult,
+  isFastMode,
   isAdvancedOpen,
   isExecuting,
   isGenerating,
@@ -63,6 +66,7 @@ export const RuntimeWorkspace = ({
   onEnableRcpMockChange,
   onExecutePrompt,
   onExecutionPromptChange,
+  onFastModeChange,
   onGenerationPromptChange,
   onGenerateUser,
   onKeepSandboxChange,
@@ -197,6 +201,18 @@ export const RuntimeWorkspace = ({
         >
           <summary>Advanced options</summary>
           <div className="advanced-controls">
+            <label
+              className="ui-toggle tooltip-toggle"
+              title="Executes the test to create the user, but strips out all assertions (e.g., expect statements) to optimize execution speed. The actual test code (API/UI interactions) will still run."
+            >
+              <input
+                checked={isFastMode}
+                disabled={isGenerating}
+                onChange={(event) => onFastModeChange(event.target.checked)}
+                type="checkbox"
+              />
+              Fast Mode
+            </label>
             <label className="ui-toggle">
               <input
                 checked={enableRcpMock}

@@ -223,7 +223,11 @@ export const runRunCommand = async (
       const executeMs = Date.now() - executeStartedAt;
 
       const credentialExecution = parseCredentialExecution(execution.markerLines);
-      if (executionMode === "fast" && !credentialExecution.accounts.target?.usable) {
+      if (
+        executionMode === "fast" &&
+        !credentialExecution.accounts.target?.usable &&
+        !credentialExecution.runState.completedFullFlow
+      ) {
         throw new TugError(
           "CREDENTIAL_MARKER_MISSING",
           "Fast execution mode completed without complete primary credentials (email/password)."
@@ -309,12 +313,6 @@ export const runRunCommand = async (
     executeMs: result.timing.executeMs,
     totalMs: Date.now() - totalStartedAt
   };
-  const fastPathTriggered =
-    result.executionMode === "fast" &&
-    result.credentialExecution.runState.partial &&
-    result.credentialExecution.runState.exitPhase === "fast-early-return" &&
-    Boolean(result.credentialExecution.accounts.target?.usable);
-
   const payload = {
     ok: true,
     fingerprint: preflight.fingerprint.fingerprint,
@@ -335,7 +333,6 @@ export const runRunCommand = async (
     accounts: result.credentialExecution.accounts,
     runState: result.credentialExecution.runState,
     timing,
-    fastPathTriggered,
     warnings
   };
 
@@ -378,7 +375,6 @@ export const runRunCommand = async (
       `Sandbox: ${result.pipeline.sandbox.path}`,
       `Target account: ${JSON.stringify(result.credentialExecution.accounts.target?.fields ?? {})}`,
       `Run state: ${result.credentialExecution.runState.partial ? "partial" : "complete"}`,
-      `Fast path: ${fastPathTriggered ? "yes" : "no"}`,
       `Timing(ms): ${JSON.stringify(timing)}`,
       options.output ? `Wrote output to ${options.output}` : ""
     ]

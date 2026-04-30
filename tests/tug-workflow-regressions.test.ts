@@ -157,7 +157,7 @@ describe("transformIntoSandbox", () => {
     expect(workflowMocks.runPlaywrightList).toHaveBeenCalledOnce();
   });
 
-  it("reuses a fast validation proof for full-mode fallback validation", async () => {
+  it("does not reuse a fast validation proof for full-mode fallback validation", async () => {
     const workspace = await createTempDir();
     const specPath = await writeFile(
       workspace,
@@ -253,8 +253,9 @@ describe("transformIntoSandbox", () => {
       validationProof: fastPipeline.validationProof
     });
 
-    expect(workflowMocks.runTypecheck).toHaveBeenCalledOnce();
-    expect(workflowMocks.runPlaywrightList).toHaveBeenCalledOnce();
+    expect(fastPipeline.validationProof?.coversExecutionModes).toEqual(["fast"]);
+    expect(workflowMocks.runTypecheck).toHaveBeenCalledTimes(2);
+    expect(workflowMocks.runPlaywrightList).toHaveBeenCalledTimes(2);
   });
 });
 

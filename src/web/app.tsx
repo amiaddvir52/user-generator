@@ -57,6 +57,7 @@ export const App = () => {
   const [executionResult, setExecutionResult] = useState<ProviderExecutionResponse | null>(null);
   const [generationPrompt, setGenerationPrompt] = useState(DEFAULT_USER_GENERATION_PROMPT);
   const [keepSandbox, setKeepSandbox] = useState(false);
+  const [isFastMode, setIsFastMode] = useState(DEFAULT_GENERATION_OVERRIDES.executionMode === "fast");
   const [enableRcpMock, setEnableRcpMock] = useState(false);
   const [trustUnknown, setTrustUnknown] = useState(DEFAULT_GENERATION_OVERRIDES.trustUnknown);
   const [trustUncertainTeardown, setTrustUncertainTeardown] = useState(
@@ -242,6 +243,7 @@ export const App = () => {
       prompt: generationPrompt.trim(),
       environment: environmentSelection || undefined,
       enableRcpMock: enableRcpMock || undefined,
+      executionMode: isFastMode ? "fast" : "full",
       keepSandbox: keepSandbox || undefined,
       trustUnknown,
       trustUncertainTeardown
@@ -253,11 +255,13 @@ export const App = () => {
     setGenerationPrompt(entry.request.prompt ?? DEFAULT_USER_GENERATION_PROMPT);
     setEnvironmentSelection(entry.request.environment);
     setEnableRcpMock(entry.request.enableRcpMock);
+    setIsFastMode(entry.request.executionMode === "fast");
     setKeepSandbox(entry.request.keepSandbox);
     setTrustUnknown(entry.request.trustUnknown);
     setTrustUncertainTeardown(entry.request.trustUncertainTeardown);
     setIsAdvancedOpen(
       entry.request.enableRcpMock ||
+        entry.request.executionMode !== DEFAULT_GENERATION_OVERRIDES.executionMode ||
         entry.request.keepSandbox ||
         !entry.request.trustUnknown ||
         !entry.request.trustUncertainTeardown
@@ -428,6 +432,7 @@ export const App = () => {
         generationError={generationError}
         generationPrompt={generationPrompt}
         generationResult={generationResult}
+        isFastMode={isFastMode}
         isAdvancedOpen={isAdvancedOpen}
         isExecuting={isExecuting}
         isGenerating={isGenerating}
@@ -440,6 +445,7 @@ export const App = () => {
         onEnableRcpMockChange={setEnableRcpMock}
         onExecutePrompt={() => void executePrompt()}
         onExecutionPromptChange={setExecutionPrompt}
+        onFastModeChange={setIsFastMode}
         onGenerateUser={() => void generateUser()}
         onGenerationPromptChange={setGenerationPrompt}
         onKeepSandboxChange={setKeepSandbox}

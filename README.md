@@ -104,7 +104,7 @@ tug gc [--max-age-days <n>] [--json]
 ## Execution modes
 
 - UI user generation defaults to `executionMode=fast` with automatic fallback to `full`.
-- Fast mode adds an early credential probe and can short-circuit long assertion paths when credentials are already available after setup hooks.
+- Fast mode runs the selected test flow but strips Playwright assertion statements to reduce validation overhead.
 - If fast mode completes without complete primary credentials (`email` + `password`) and fallback is enabled, TUG reruns once in `full` mode.
 - CLI defaults to `full`; opt into fast mode with `--execution-mode fast`.
 

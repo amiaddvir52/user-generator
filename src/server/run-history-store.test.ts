@@ -125,7 +125,7 @@ describe("run history store", () => {
     expect(loaded[0].id).toBe("new");
   });
 
-  it("hydrates defaults when loading legacy entries without execution mode fields", async () => {
+  it("returns empty history for unsupported old entry shapes", async () => {
     const configDir = await createTempDir();
     const store = createRunHistoryStore({ configDir });
 
@@ -173,13 +173,6 @@ describe("run history store", () => {
       "utf8"
     );
 
-    const loaded = await store.load();
-    expect(loaded).toHaveLength(1);
-    expect(loaded[0].request.executionMode).toBe("full");
-    expect(loaded[0].request.allowAutoFallback).toBe(true);
-    expect(loaded[0].result.executionMode).toBe("full");
-    expect(loaded[0].result.fallbackTriggered).toBe(false);
-    expect(loaded[0].result.accounts.target?.fields.email).toBe("legacy@example.com");
-    expect(loaded[0].result.runState.completedFullFlow).toBe(true);
+    await expect(store.load()).resolves.toEqual([]);
   });
 });

@@ -619,7 +619,6 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
         accounts: payload.accounts,
         runState: payload.runState,
         timing: payload.timing,
-        fastPathTriggered: payload.fastPathTriggered,
         warnings: payload.warnings
       };
 
@@ -651,7 +650,6 @@ export const buildApp = async ({ configDir, webRoot, services = {} }: BuildAppOp
           accounts: response.accounts,
           runState: response.runState,
           timing: response.timing,
-          fastPathTriggered: response.fastPathTriggered,
           warnings: response.warnings
         }
       };

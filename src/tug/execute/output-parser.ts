@@ -10,7 +10,7 @@ import type {
 } from "../common/types.js";
 import { hasCompletePrimaryCredentials } from "./credential-completeness.js";
 
-const PHASE_ORDER: CredentialSnapshotPhase[] = ["entry", "fast-early-return", "final"];
+const PHASE_ORDER: CredentialSnapshotPhase[] = ["entry", "final"];
 
 type MutableAccount = {
   internalId: string;
@@ -112,23 +112,20 @@ const parseMarkerEvent = (line: string): CredentialSnapshotEvent | undefined => 
       line?: number;
       credentials?: CredentialPayload;
     };
-    const phase = PHASE_ORDER.includes(envelope.phase as CredentialSnapshotPhase)
-      ? (envelope.phase as CredentialSnapshotPhase)
-      : "final";
+    if (!PHASE_ORDER.includes(envelope.phase as CredentialSnapshotPhase)) {
+      throw new TugError(
+        "CREDENTIAL_MARKER_MISSING",
+        "Credential marker payload included an unsupported phase.",
+        [line]
+      );
+    }
+    const phase = envelope.phase as CredentialSnapshotPhase;
     const credentials = normalizeCredentialPayload((envelope.credentials ?? {}) as CredentialPayload);
     const lineNumber = Number.isFinite(envelope.line) ? envelope.line : parseFallbackLineNumber(line);
     return {
       phase,
       line: lineNumber,
       credentials
-    };
-  }
-
-  if (typeof parsed === "object" && parsed != null) {
-    return {
-      phase: "final",
-      line: parseFallbackLineNumber(line),
-      credentials: normalizeCredentialPayload(parsed as CredentialPayload)
     };
   }
 
@@ -143,7 +140,6 @@ const materializeAccount = (account: MutableAccount): GeneratedAccount => {
   const sourcePhases = PHASE_ORDER.filter((phase) => account.phases.has(phase));
   const provisioningState = account.phases.has("final") ? "complete" : "partial";
   const hasPrimaryCredentials = hasCompletePrimaryCredentials(account.fields);
-  const usableFromFastEarlyReturn = provisioningState === "partial" && account.phases.has("fast-early-return");
 
   return {
     id: resolveCanonicalAccountId({
@@ -153,7 +149,7 @@ const materializeAccount = (account: MutableAccount): GeneratedAccount => {
     fields: account.fields,
     sourcePhases,
     provisioningState,
-    usable: hasPrimaryCredentials && (provisioningState === "complete" || usableFromFastEarlyReturn)
+    usable: hasPrimaryCredentials && provisioningState === "complete"
   };
 };
 

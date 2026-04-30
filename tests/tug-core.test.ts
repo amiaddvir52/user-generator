@@ -16,9 +16,9 @@ import { buildPlaywrightDisplayTitle, buildPlaywrightGrepPattern } from "../src/
 import { quoteForShellValue } from "../src/tug/common/shell.js";
 import {
   credentialProbeStatements,
-  earlyReturnCredentialProbeStatements,
   entryCredentialProbeStatements
 } from "../src/tug/transform/credential-probe.js";
+import { transformSelectedSpec } from "../src/tug/transform/transformer.js";
 import { validateSyntaxRoundTrip } from "../src/tug/validate/syntax.js";
 import { resolveSetupCacheRoot } from "../src/tug/common/paths.js";
 import { buildSandbox, cleanupSandbox } from "../src/tug/sandbox/builder.js";
@@ -346,7 +346,7 @@ describe("credential marker parsing", () => {
   it("extracts credentials from marker output", () => {
     const payload = parseCredentialMarker([
       "[playwright] hello",
-      "__TUG_CRED__{\"email\":\"a@b.com\",\"password\":\"secret\"}"
+      "__TUG_CRED__{\"phase\":\"final\",\"credentials\":{\"email\":\"a@b.com\",\"password\":\"secret\"}}"
     ]);
 
     expect(payload).toEqual({
@@ -368,12 +368,14 @@ describe("credential marker parsing", () => {
       remainder: ""
     });
     const second = readBufferedLines({
-      chunk: "CRED__{\"email\":\"a@b.com\",\"password\":\"secret\"}\n",
+      chunk: "CRED__{\"phase\":\"final\",\"credentials\":{\"email\":\"a@b.com\",\"password\":\"secret\"}}\n",
       remainder: first.remainder
     });
 
     expect(first.lines).toEqual([]);
-    expect(second.lines).toEqual(['__TUG_CRED__{"email":"a@b.com","password":"secret"}']);
+    expect(second.lines).toEqual([
+      '__TUG_CRED__{"phase":"final","credentials":{"email":"a@b.com","password":"secret"}}'
+    ]);
     expect(flushBufferedLines(second.remainder)).toEqual([]);
     expect(parseCredentialMarker(second.lines)).toEqual({
       email: "a@b.com",
@@ -384,18 +386,26 @@ describe("credential marker parsing", () => {
   it("reports partial run-state when final marker is missing", () => {
     const parsed = parseCredentialExecution([
       '__TUG_CRED__{"phase":"entry","line":14,"credentials":{"accountId":"a-1"}}',
-      '__TUG_CRED__{"phase":"fast-early-return","line":27,"credentials":{"email":"a@b.com","password":"secret","accountId":"a-1"}}'
+      '__TUG_CRED__{"phase":"entry","line":27,"credentials":{"email":"a@b.com","password":"secret","accountId":"a-1"}}'
     ]);
 
     expect(parsed.runState).toEqual({
       completedFullFlow: false,
       partial: true,
-      exitPhase: "fast-early-return",
+      exitPhase: "entry",
       exitLine: 27
     });
     expect(parsed.warning).toContain("partial/incomplete");
     expect(parsed.accounts.target?.provisioningState).toBe("partial");
-    expect(parsed.accounts.target?.usable).toBe(true);
+    expect(parsed.accounts.target?.usable).toBe(false);
+  });
+
+  it("rejects unsupported credential snapshot phases", () => {
+    expect(() =>
+      parseCredentialExecution([
+        '__TUG_CRED__{"phase":"fast-early-return","line":27,"credentials":{"email":"a@b.com","password":"secret"}}'
+      ])
+    ).toThrowError(expect.objectContaining({ reason: "CREDENTIAL_MARKER_MISSING" }));
   });
 
   it("classifies final snapshot as target and prior sibling as secondary", () => {
@@ -445,38 +455,132 @@ describe("credential probe generation", () => {
     expect(statements).toContain("smAccountId:");
   });
 
-  it("can typecheck the fast-mode early-return probe block", () => {
-    const project = new Project({
-      useInMemoryFileSystem: true,
-      compilerOptions: {
-        module: ModuleKind.ESNext,
-        target: ScriptTarget.ESNext,
-        strict: true
-      }
+  it("only emits entry and final credential phases", () => {
+    const statements = [
+      ...entryCredentialProbeStatements(),
+      ...credentialProbeStatements()
+    ].join("\n");
+
+    expect(statements).toContain("'entry'");
+    expect(statements).toContain("'final'");
+    expect(statements).not.toContain("fast-early-return");
+  });
+});
+
+describe("fast-mode assertion stripping", () => {
+  const transformFixture = async ({
+    source,
+    executionMode = "fast"
+  }: {
+    source: string;
+    executionMode?: "fast" | "full";
+  }) => {
+    const root = await createTempDir();
+    const filePath = path.join(root, "account.spec.ts");
+    await fs.writeFile(filePath, source, "utf8");
+
+    return transformSelectedSpec({
+      entry: {
+        filePath,
+        testTitle: "creates account",
+        describeTitles: [],
+        tags: [],
+        helperImports: [],
+        teardownCalls: [],
+        scoreHints: {}
+      },
+      teardown: {
+        confirmed: [],
+        suspected: [],
+        scores: [],
+        observedHookCalls: []
+      },
+      compatibilityStatus: "supported",
+      workingTreeDirty: false,
+      knownFingerprint: true,
+      executionMode
+    });
+  };
+
+  it("strips Playwright assertion statements in fast mode while preserving test actions", async () => {
+    const result = await transformFixture({
+      source: [
+        "import { test, expect } from '@playwright/test';",
+        "",
+        "test('creates account', async ({ page }) => {",
+        "  const response = await page.request.post('/users');",
+        "  await page.click('button#create');",
+        "  expect(response.ok()).toBeTruthy();",
+        "  await expect(page.getByText('Done')).toBeVisible();",
+        "});"
+      ].join("\n")
     });
 
-    project.createSourceFile(
-      "probe-fast.ts",
-      [
-        "const testBody = () => {",
-        ...entryCredentialProbeStatements().map((statement) => `  ${statement}`),
-        ...earlyReturnCredentialProbeStatements().map((statement) => `  ${statement}`),
-        ...credentialProbeStatements().map((statement) => `  ${statement}`),
-        "};"
-      ].join("\n"),
-      { overwrite: true }
-    );
-
-    const diagnostics = project.getPreEmitDiagnostics();
-    expect(diagnostics).toEqual([]);
+    expect(result.transformedText).toContain("await page.click('button#create');");
+    expect(result.transformedText).toContain("/* tug: assertion suppressed */");
+    expect(result.transformedText).not.toContain(".toBeTruthy()");
+    expect(result.transformedText).not.toContain(".toBeVisible()");
+    expect(result.transformedText).toContain("__tugEmitCredentialSnapshot('final'");
+    expect(() => validateSyntaxRoundTrip(result.transformedText, "gen.spec.ts")).not.toThrow();
   });
 
-  it("does not reference possibly-TDZ locals in the fast-mode probe", () => {
-    const statements = earlyReturnCredentialProbeStatements().join("\n");
-    expect(statements).not.toContain("typeof marketplaceId");
-    expect(statements).not.toContain("typeof accountId");
-    expect(statements).not.toContain("typeof smAccountId");
-    expect(statements).toContain("fast-early-return");
+  it("preserves side-effectful assertion arguments before suppressing the assertion", async () => {
+    const result = await transformFixture({
+      source: [
+        "import { test, expect } from '@playwright/test';",
+        "",
+        "test('creates account', async () => {",
+        "  let created: unknown;",
+        "  await expect(created = await createUser()).toBeTruthy();",
+        "  expect(await createAuditRecord()).toEqual('ok');",
+        "});"
+      ].join("\n")
+    });
+
+    expect(result.transformedText).toContain("void ((created = await createUser()));");
+    expect(result.transformedText).toContain("void ((await createAuditRecord()));");
+    expect(result.transformedText).not.toContain(".toBeTruthy()");
+    expect(result.transformedText).not.toContain(".toEqual('ok')");
+    expect(() => validateSyntaxRoundTrip(result.transformedText, "gen.spec.ts")).not.toThrow();
+  });
+
+  it("strips nested and chained assertion statements but leaves assertion assignments intact", async () => {
+    const result = await transformFixture({
+      source: [
+        "import { test, expect } from '@playwright/test';",
+        "",
+        "test('creates account', async ({ page }) => {",
+        "  const value = 'ok';",
+        "  if (value) {",
+        "    expect.soft(value).toEqual('ok');",
+        "    await expect(Promise.resolve(value)).resolves.toBe('ok');",
+        "  }",
+        "  const retained = expect(value).toBeDefined();",
+        "  retained;",
+        "});"
+      ].join("\n")
+    });
+
+    expect(result.transformedText).not.toContain("expect.soft(value).toEqual");
+    expect(result.transformedText).not.toContain(".resolves.toBe");
+    expect(result.transformedText).toContain("const retained = expect(value).toBeDefined();");
+    expect(() => validateSyntaxRoundTrip(result.transformedText, "gen.spec.ts")).not.toThrow();
+  });
+
+  it("keeps assertions in full mode", async () => {
+    const result = await transformFixture({
+      executionMode: "full",
+      source: [
+        "import { test, expect } from '@playwright/test';",
+        "",
+        "test('creates account', async ({ page }) => {",
+        "  await expect(page.locator('h1')).toBeVisible();",
+        "});"
+      ].join("\n")
+    });
+
+    expect(result.transformedText).toContain("await expect(page.locator('h1')).toBeVisible();");
+    expect(result.transformedText).not.toContain("/* tug: assertion suppressed */");
   });
 });
 

@@ -217,7 +217,7 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
             cloudProvider: null,
             region: null
           },
-          coversExecutionModes: ["fast", "full"]
+          coversExecutionModes: ["fast"]
         },
         sandbox: {
           path: "/tmp/sandbox-fast",
@@ -255,13 +255,12 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
       expect.objectContaining({
         executionMode: "full",
         validationProof: expect.objectContaining({
-          coversExecutionModes: ["fast", "full"]
+          coversExecutionModes: ["fast"]
         })
       })
     );
     expect(result.executionMode).toBe("full");
     expect(result.fallbackTriggered).toBe(true);
-    expect(result.fastPathTriggered).toBe(false);
     expect(result.warnings).toEqual(
       expect.arrayContaining([
         "Fast execution mode fallback triggered: reran in full mode for complete credentials."
@@ -308,33 +307,7 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
     );
   });
 
-  it("keeps fast mode when fast-early-return yields usable credentials", async () => {
-    workflowMocks.parseCredentialExecution.mockReturnValueOnce({
-      events: [],
-      runState: {
-        completedFullFlow: false,
-        partial: true,
-        exitPhase: "fast-early-return",
-        exitLine: 41
-      },
-      accounts: {
-        target: {
-          id: "a@b.com",
-          fields: {
-            email: "a@b.com",
-            password: "secret",
-            accountId: "123"
-          },
-          sourcePhases: ["entry", "fast-early-return"],
-          provisioningState: "partial",
-          usable: true
-        },
-        secondary: []
-      },
-      warning:
-        "Warning: Test exited at line 41. Credential marker captured but provisioned state is partial/incomplete."
-    });
-
+  it("keeps fast mode when fast mode completes the full flow with usable credentials", async () => {
     const result = await executeUserGeneration({
       spec: "/repo/spec.ts",
       test: "creates user",
@@ -345,12 +318,7 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
     expect(workflowMocks.transformIntoSandbox).toHaveBeenCalledOnce();
     expect(result.executionMode).toBe("fast");
     expect(result.fallbackTriggered).toBe(false);
-    expect(result.fastPathTriggered).toBe(true);
-    expect(result.warnings).toEqual(
-      expect.arrayContaining([
-        "Warning: Test exited at line 41. Credential marker captured but provisioned state is partial/incomplete."
-      ])
-    );
+    expect(result.runState.completedFullFlow).toBe(true);
     expect(result.warnings).not.toContain(
       "Target account is not fully provisioned or is missing primary credentials."
     );
@@ -432,7 +400,7 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
       runState: {
         completedFullFlow: false,
         partial: true,
-        exitPhase: "fast-early-return",
+        exitPhase: "entry",
         exitLine: 73
       },
       accounts: {
@@ -442,7 +410,7 @@ describe("executeUserGeneration with optional RCP mock gate", () => {
             email: "a@b.com",
             password: "secret"
           },
-          sourcePhases: ["entry", "fast-early-return"],
+          sourcePhases: ["entry"],
           provisioningState: "partial",
           usable: false
         },

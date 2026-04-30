@@ -167,7 +167,7 @@ export type CredentialPayload = {
   [key: string]: string | undefined;
 };
 
-export type CredentialSnapshotPhase = "entry" | "fast-early-return" | "final";
+export type CredentialSnapshotPhase = "entry" | "final";
 
 export type CredentialSnapshotEvent = {
   phase: CredentialSnapshotPhase;

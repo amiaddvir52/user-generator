@@ -29,7 +29,7 @@ const sharedCredentialProbeHelpers = () => [
   "  }",
   "  return undefined;",
   "};",
-  "const __tugEmitCredentialSnapshot = (phase: 'entry' | 'fast-early-return' | 'final', payload: Record<string, string | undefined>) => {",
+  "const __tugEmitCredentialSnapshot = (phase: 'entry' | 'final', payload: Record<string, string | undefined>) => {",
   "  const envelope = {",
   "    phase,",
   "    line: __tugResolveSourceLine(),",
@@ -81,19 +81,4 @@ export const entryCredentialProbeStatements = () => [
 export const credentialProbeStatements = () => [
   "const __tugCredFinal = __tugBuildFinalCredentialSnapshot();",
   "__tugEmitCredentialSnapshot('final', __tugCredFinal);"
-];
-
-export const earlyReturnCredentialProbeStatements = () => [
-  "const __tugShouldReturnEarly = (() => {",
-  "  const __tugCred = __tugBuildEntryCredentialSnapshot();",
-  "  const __tugHasPrimaryCredentials = Boolean(__tugCred.email) && Boolean(__tugCred.password);",
-  "  if (!__tugHasPrimaryCredentials) {",
-  "    return false;",
-  "  }",
-  "  __tugEmitCredentialSnapshot('fast-early-return', __tugCred);",
-  "  return true;",
-  "})();",
-  "if (__tugShouldReturnEarly) {",
-  "  return;",
-  "}"
 ];

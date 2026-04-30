@@ -13,20 +13,7 @@ type RunHistoryStoreOptions = {
   maxEntries?: number;
 };
 
-const isNonEmpty = (value: string | undefined) => typeof value === "string" && value.trim().length > 0;
-
-const normalizeCredentialRecord = (credentials: Record<string, string | undefined>) =>
-  Object.fromEntries(
-    Object.entries(credentials).filter((entry): entry is [string, string] => isNonEmpty(entry[1]))
-  ) as Record<string, string | undefined>;
-
-const buildLegacyRunState = (credentials: Record<string, string | undefined>) => {
-  const hasPrimaryCredentials = isNonEmpty(credentials.email) && isNonEmpty(credentials.password);
-  return {
-    completedFullFlow: hasPrimaryCredentials,
-    partial: !hasPrimaryCredentials
-  };
-};
+const CredentialSnapshotPhaseSchema = z.enum(["entry", "final"]);
 
 const RunHistoryEntrySchema = z.object({
   id: z.string().min(1),
@@ -36,8 +23,8 @@ const RunHistoryEntrySchema = z.object({
     spec: z.string().min(1).optional(),
     test: z.string().min(1).optional(),
     environment: z.string().min(1),
-    executionMode: z.enum(["fast", "full"]).default("full"),
-    allowAutoFallback: z.boolean().default(true),
+    executionMode: z.enum(["fast", "full"]),
+    allowAutoFallback: z.boolean(),
     enableRcpMock: z.boolean(),
     trustUnknown: z.boolean(),
     trustUncertainTeardown: z.boolean(),
@@ -52,8 +39,8 @@ const RunHistoryEntrySchema = z.object({
       title: z.string().min(1)
     }),
     environment: z.string().min(1),
-    executionMode: z.enum(["fast", "full"]).default("full"),
-    fallbackTriggered: z.boolean().default(false),
+    executionMode: z.enum(["fast", "full"]),
+    fallbackTriggered: z.boolean(),
     confidence: z.number(),
     sandboxPath: z.string().min(1),
     accounts: z.object({
@@ -61,7 +48,7 @@ const RunHistoryEntrySchema = z.object({
         .object({
           id: z.string().min(1),
           fields: z.record(z.string(), z.string().optional()),
-          sourcePhases: z.array(z.enum(["entry", "fast-early-return", "final"])),
+          sourcePhases: z.array(CredentialSnapshotPhaseSchema),
           provisioningState: z.enum(["complete", "partial"]),
           usable: z.boolean()
         })
@@ -70,7 +57,7 @@ const RunHistoryEntrySchema = z.object({
         z.object({
           id: z.string().min(1),
           fields: z.record(z.string(), z.string().optional()),
-          sourcePhases: z.array(z.enum(["entry", "fast-early-return", "final"])),
+          sourcePhases: z.array(CredentialSnapshotPhaseSchema),
           provisioningState: z.enum(["complete", "partial"]),
           usable: z.boolean()
         })
@@ -79,7 +66,7 @@ const RunHistoryEntrySchema = z.object({
     runState: z.object({
       completedFullFlow: z.boolean(),
       partial: z.boolean(),
-      exitPhase: z.enum(["entry", "fast-early-return", "final"]).optional(),
+      exitPhase: CredentialSnapshotPhaseSchema.optional(),
       exitLine: z.number().int().positive().optional()
     }),
     timing: z.object({
@@ -96,57 +83,8 @@ const RunHistoryEntrySchema = z.object({
       repoListCacheHit: z.boolean().optional(),
       sandboxValidationCacheHit: z.boolean().optional()
     }).optional(),
-    fastPathTriggered: z.boolean().optional(),
     warnings: z.array(z.string())
-  }).or(
-    z.object({
-      fingerprint: z.string().min(1),
-      compatibility: z.enum(["supported", "experimental"]),
-      selectedTest: z.object({
-        filePath: z.string().min(1),
-        title: z.string().min(1)
-      }),
-      environment: z.string().min(1),
-      executionMode: z.enum(["fast", "full"]).default("full"),
-      fallbackTriggered: z.boolean().default(false),
-      confidence: z.number(),
-      sandboxPath: z.string().min(1),
-      credentials: z.record(z.string(), z.string().optional()),
-      warnings: z.array(z.string())
-    }).transform((legacy) => {
-      const normalizedCredentials = normalizeCredentialRecord(legacy.credentials);
-      const runState = buildLegacyRunState(normalizedCredentials);
-      const targetUsable = runState.completedFullFlow;
-      return {
-        fingerprint: legacy.fingerprint,
-        compatibility: legacy.compatibility,
-        selectedTest: legacy.selectedTest,
-        environment: legacy.environment,
-        executionMode: legacy.executionMode,
-        fallbackTriggered: legacy.fallbackTriggered,
-        confidence: legacy.confidence,
-        sandboxPath: legacy.sandboxPath,
-        accounts: {
-          target: {
-            id:
-              normalizedCredentials.smAccountId ??
-              normalizedCredentials.accountId ??
-              normalizedCredentials.email ??
-              "legacy-target",
-            fields: normalizedCredentials,
-            sourcePhases: targetUsable ? ["final"] : ["entry"],
-            provisioningState: targetUsable ? "complete" : "partial",
-            usable: targetUsable
-          },
-          secondary: []
-        },
-        runState,
-        timing: undefined,
-        fastPathTriggered: undefined,
-        warnings: legacy.warnings
-      };
-    })
-  )
+  })
 });
 
 const RunHistoryFileSchema = z.object({
