@@ -6,6 +6,6 @@ export const IntentSchema = z.object({
   hints: z.object({
     payerLocation: z.string().optional(),
     contractType: z.string().optional()
-  })
+  }),
+  compose: z.boolean().default(false)
 });
-

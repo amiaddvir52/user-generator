@@ -15,6 +15,7 @@ export const runExplainCommand = async (
     trustUnknown?: boolean;
     reindex?: boolean;
     json?: boolean;
+    compose?: boolean;
   }
 ) => {
   const context = await loadRunContext({ repo: options.repo });
@@ -37,6 +38,10 @@ export const runExplainCommand = async (
   const top = Number(options.top ?? "5");
   const topRanked = ranked.slice(0, Number.isFinite(top) && top > 0 ? top : 5);
   const ambiguity = computeAmbiguity(ranked);
+  const composeEnabled = options.compose !== false;
+  const wouldCompose =
+    composeEnabled && (intent.compose || ambiguity.ambiguous) && ranked.length >= 2;
+  const compositionDonors = wouldCompose ? ranked.slice(1, 3) : [];
 
   const payload = {
     ok: true,
@@ -44,6 +49,16 @@ export const runExplainCommand = async (
     intent,
     ambiguous: ambiguity.ambiguous,
     margin: ambiguity.margin,
+    composition: wouldCompose
+      ? {
+          base: { filePath: ranked[0].entry.filePath, title: ranked[0].entry.testTitle },
+          donors: compositionDonors.map((candidate) => ({
+            filePath: candidate.entry.filePath,
+            title: candidate.entry.testTitle,
+            score: candidate.score
+          }))
+        }
+      : null,
     candidates: topRanked.map((candidate) => ({
       score: candidate.score,
       reasons: candidate.reasons,
@@ -56,6 +71,7 @@ export const runExplainCommand = async (
   const lines = [
     `Fingerprint: ${preflight.fingerprint.fingerprint}`,
     `Ambiguous: ${ambiguity.ambiguous ? "yes" : "no"} (margin ${ambiguity.margin.toFixed(3)})`,
+    `Compose: ${wouldCompose ? "yes" : "no"}`,
     "Candidates:"
   ];
 
@@ -67,6 +83,14 @@ export const runExplainCommand = async (
       lines.push(`   reasons: ${candidate.reasons.join("; ")}`);
     }
   });
+
+  if (wouldCompose && compositionDonors.length > 0) {
+    lines.push("Composition plan:");
+    lines.push(`   base: ${ranked[0].entry.testTitle} (${ranked[0].entry.filePath})`);
+    compositionDonors.forEach((donor) => {
+      lines.push(`   donor: ${donor.entry.testTitle} (${donor.entry.filePath})`);
+    });
+  }
 
   printResult({
     json: Boolean(options.json),

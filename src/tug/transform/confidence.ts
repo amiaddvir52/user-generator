@@ -15,7 +15,7 @@ export const computeTransformConfidence = ({
 }) => {
   const minRemovedScore = removedCalls.length > 0 ? Math.min(...removedCalls.map((call) => call.score)) : 1;
   const fingerprintKnownFactor = compatibilityStatus === "supported" ? 1 : 0.85;
-  const singleTestMatchFactor = singleTestMatch ? 1 : 0.7;
+  const singleTestMatchFactor = singleTestMatch ? 1 : 0.85;
   const workingTreeFactor = workingTreeDirty ? 0.9 : 1;
 
   const confidence = round(minRemovedScore * fingerprintKnownFactor * singleTestMatchFactor * workingTreeFactor);

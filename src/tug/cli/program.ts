@@ -58,6 +58,7 @@ export const createTugProgram = ({
     .argument("<prompt>", "Prompt describing the desired provisioned state.")
     .option("--reindex", "Force index rebuild.")
     .option("--top <n>", "Number of candidates to show.")
+    .option("--no-compose", "Disable dynamic composition planning for the prompt.")
     .action(async (prompt, options) => runExplainCommand(prompt, options));
 
   withCommonOutputOptions(withSafetyOptions(withRepoOption(program.command("dry-run"))))
@@ -77,6 +78,7 @@ export const createTugProgram = ({
     .option("--environment <value>", "Override environment for execution context.")
     .option("--execution-mode <mode>", "Execution mode: full (default) or fast.")
     .option("--no-auto-fallback", "Disable fast->full fallback when credentials are incomplete.")
+    .option("--no-compose", "Disable dynamic composition for ambiguous or multi-intent prompts.")
     .option("--yes", "Auto-accept confirmations.")
     .option("--keep-sandbox", "Retain sandbox after completion.")
     .option("--reindex", "Force index rebuild.")

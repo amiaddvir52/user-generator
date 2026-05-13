@@ -1,9 +1,10 @@
 import { promises as fs } from "node:fs";
-import { Node, Project, SyntaxKind, type CallExpression, type Expression, type Statement } from "ts-morph";
+import { Node, Project, SyntaxKind, type CallExpression, type Expression, type SourceFile, type Statement } from "ts-morph";
 
 import { TugError } from "../common/errors.js";
 import type {
   CompatibilityStatus,
+  CompositionInfo,
   ExecutionMode,
   RemovedCallsite,
   SpecIndexEntry,
@@ -258,28 +259,27 @@ const removeDirectTeardownStatements = ({
   });
 };
 
-export const transformSelectedSpec = async ({
+export const applyBaseTransformMutations = ({
+  sourceFile,
   entry,
   teardown,
   compatibilityStatus,
   workingTreeDirty,
   knownFingerprint,
-  executionMode = "full"
+  executionMode,
+  originalText,
+  composition
 }: {
+  sourceFile: SourceFile;
   entry: SpecIndexEntry;
   teardown: TeardownDetectionResult;
   compatibilityStatus: CompatibilityStatus;
   workingTreeDirty: boolean;
   knownFingerprint: boolean;
-  executionMode?: ExecutionMode;
-}): Promise<TransformResult> => {
-  const originalText = await fs.readFile(entry.filePath, "utf8");
-
-  const project = new Project({
-    skipAddingFilesFromTsConfig: true
-  });
-  const sourceFile = project.createSourceFile(entry.filePath, originalText, { overwrite: true });
-
+  executionMode: ExecutionMode;
+  originalText: string;
+  composition?: CompositionInfo;
+}): TransformResult => {
   const confirmedSet = new Set(teardown.confirmed);
   const suspectedSet = new Set(teardown.suspected);
   const teardownScoreMap = new Map(teardown.scores.map((score) => [score.identifier, score.score]));
@@ -423,7 +423,7 @@ export const transformSelectedSpec = async ({
   const { confidence } = computeTransformConfidence({
     removedCalls,
     compatibilityStatus: knownFingerprint ? "supported" : compatibilityStatus,
-    singleTestMatch: true,
+    singleTestMatch: !composition,
     workingTreeDirty
   });
 
@@ -435,6 +435,41 @@ export const transformSelectedSpec = async ({
     removedCalls: removedCalls.sort((left, right) => left.line - right.line),
     confidence,
     unknownHookCalls: [],
-    uncertainIdentifiers: [...uncertainIdentifiers].sort()
+    uncertainIdentifiers: [...uncertainIdentifiers].sort(),
+    composition
   };
+};
+
+export const transformSelectedSpec = async ({
+  entry,
+  teardown,
+  compatibilityStatus,
+  workingTreeDirty,
+  knownFingerprint,
+  executionMode = "full"
+}: {
+  entry: SpecIndexEntry;
+  teardown: TeardownDetectionResult;
+  compatibilityStatus: CompatibilityStatus;
+  workingTreeDirty: boolean;
+  knownFingerprint: boolean;
+  executionMode?: ExecutionMode;
+}): Promise<TransformResult> => {
+  const originalText = await fs.readFile(entry.filePath, "utf8");
+
+  const project = new Project({
+    skipAddingFilesFromTsConfig: true
+  });
+  const sourceFile = project.createSourceFile(entry.filePath, originalText, { overwrite: true });
+
+  return applyBaseTransformMutations({
+    sourceFile,
+    entry,
+    teardown,
+    compatibilityStatus,
+    workingTreeDirty,
+    knownFingerprint,
+    executionMode,
+    originalText
+  });
 };

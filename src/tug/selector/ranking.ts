@@ -1,5 +1,6 @@
 import type { Intent, RankedCandidate, SpecIndexEntry } from "../common/types.js";
 import { hasStandaloneKeyword } from "../common/text-signals.js";
+import { CANONICAL_ACTIONS, isActionKeyword } from "../intent/action-keywords.js";
 
 type KeywordLocation = "title" | "describe" | "path" | "tag-exact" | "tag-contains";
 type IntentKeywordClass = "action" | "context";
@@ -27,29 +28,12 @@ const INTENT_MULTIPLIER: Record<IntentKeywordClass, number> = {
   context: 1
 };
 
-const ACTION_KEYWORDS = new Set([
-  "activate",
-  "cancel",
-  "convert",
-  "create",
-  "deactivate",
-  "downgrade",
-  "enroll",
-  "migrate",
-  "provision",
-  "renew",
-  "resubscribe",
-  "signup",
-  "subscribe",
-  "terminate",
-  "unsubscribe",
-  "upgrade"
-]);
+export const ACTION_KEYWORDS = CANONICAL_ACTIONS;
 
 const normalizeKeyword = (keyword: string) => keyword.toLowerCase().replace(/^@/, "").trim();
 
 const resolveIntentKeywordClass = (keyword: string): IntentKeywordClass =>
-  ACTION_KEYWORDS.has(normalizeKeyword(keyword)) ? "action" : "context";
+  isActionKeyword(normalizeKeyword(keyword)) ? "action" : "context";
 
 const resolveKeywordLocation = (entry: SpecIndexEntry, keyword: string): KeywordLocation | undefined => {
   const normalizedKeyword = normalizeKeyword(keyword);
