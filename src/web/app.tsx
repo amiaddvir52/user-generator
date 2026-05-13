@@ -262,9 +262,7 @@ export const App = () => {
     setIsAdvancedOpen(
       entry.request.enableRcpMock ||
         entry.request.executionMode !== DEFAULT_GENERATION_OVERRIDES.executionMode ||
-        entry.request.keepSandbox ||
-        !entry.request.trustUnknown ||
-        !entry.request.trustUncertainTeardown
+        entry.request.keepSandbox
     );
 
     setGenerationResult(null);
@@ -449,11 +447,7 @@ export const App = () => {
         onGenerateUser={() => void generateUser()}
         onGenerationPromptChange={setGenerationPrompt}
         onKeepSandboxChange={setKeepSandbox}
-        onTrustUncertainTeardownChange={setTrustUncertainTeardown}
-        onTrustUnknownChange={setTrustUnknown}
         selectedEnvironment={selectedEnvironment}
-        trustUncertainTeardown={trustUncertainTeardown}
-        trustUnknown={trustUnknown}
       />
     );
   };

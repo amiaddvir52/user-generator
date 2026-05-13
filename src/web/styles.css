@@ -755,6 +755,59 @@ summary:focus-visible {
   accent-color: var(--brand);
 }
 
+.tooltip-toggle {
+  position: relative;
+  cursor: help;
+}
+
+.tooltip-toggle[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 360px;
+  padding: 0.5rem 0.65rem;
+  background: #1f2937;
+  color: #f8fafc;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.4;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 90ms ease 60ms, transform 90ms ease 60ms;
+  white-space: normal;
+}
+
+.tooltip-toggle[data-tooltip]:hover::after,
+.tooltip-toggle[data-tooltip]:focus-within::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.3rem;
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--text-muted, #6b7280);
+  opacity: 0.7;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.tooltip-toggle:hover .info-icon {
+  opacity: 1;
+  color: var(--brand);
+}
+
 .loading-card {
   margin-top: 0.85rem;
   border: 1px solid #c8dcff;
