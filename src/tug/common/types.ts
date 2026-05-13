@@ -21,6 +21,10 @@ export type ReasonCode =
   | "CONFIG_INCOMPLETE"
   | "SANDBOX_COLLISION"
   | "EXECUTION_FAILED"
+  | "USER_CANCELED"
+  | "COMPOSITION_FRAGMENT_INCOMPATIBLE"
+  | "COMPOSITION_UNRESOLVED_IDENTIFIER"
+  | "COMPOSITION_NO_VIABLE_DONORS"
   | "UNKNOWN_ERROR";
 
 export type RepoHandle = {
@@ -98,6 +102,7 @@ export type Intent = {
   rawPrompt: string;
   keywords: string[];
   hints: ScoreHints;
+  compose: boolean;
 };
 
 export type RankedCandidate = {
@@ -111,6 +116,7 @@ export type SelectionResult = {
   ranked: RankedCandidate[];
   ambiguous: boolean;
   margin: number;
+  compositionCandidates: RankedCandidate[];
 };
 
 export type RemovedCallsite = {
@@ -118,6 +124,13 @@ export type RemovedCallsite = {
   line: number;
   kind: "hook" | "body";
   score: number;
+};
+
+export type CompositionInfo = {
+  strategy: "ast-splice";
+  baseSourceFile: string;
+  donors: string[];
+  fragmentCount: number;
 };
 
 export type TransformResult = {
@@ -129,6 +142,7 @@ export type TransformResult = {
   confidence: number;
   unknownHookCalls: string[];
   uncertainIdentifiers: string[];
+  composition?: CompositionInfo;
 };
 
 export type SandboxHandle = {

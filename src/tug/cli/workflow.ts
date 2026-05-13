@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 
 import { createUnifiedDiff } from "../transform/diff.js";
 import { transformSelectedSpec } from "../transform/transformer.js";
+import { composeSyntheticSpec } from "../transform/composer.js";
 import { assertConfidenceThreshold } from "../transform/confidence.js";
 import { buildSandbox, cleanupSandbox } from "../sandbox/builder.js";
 import { runTypecheck } from "../validate/typecheck.js";
@@ -36,6 +37,8 @@ import type {
   CompatibilityResult,
   ExecutionMode,
   IndexData,
+  Intent,
+  RankedCandidate,
   RepoHandle,
   SandboxHandle,
   SpecIndexEntry,
@@ -346,7 +349,8 @@ export const transformIntoSandbox = async ({
   interactiveConfirm,
   executionMode = "full",
   env,
-  validationProof
+  validationProof,
+  composition
 }: {
   entry: SpecIndexEntry;
   repo: RepoHandle;
@@ -357,15 +361,30 @@ export const transformIntoSandbox = async ({
   executionMode?: ExecutionMode;
   env?: NodeJS.ProcessEnv;
   validationProof?: SandboxValidationProof;
+  composition?: {
+    intent: Intent;
+    donorCandidates: RankedCandidate[];
+  };
 }) => {
-  const transform = await transformSelectedSpec({
-    entry,
-    teardown: index.teardown,
-    compatibilityStatus: compatibility.status,
-    workingTreeDirty: repo.isDirty,
-    knownFingerprint: compatibility.status === "supported",
-    executionMode
-  });
+  const transform = composition && composition.donorCandidates.length > 0
+    ? await composeSyntheticSpec({
+        baseEntry: entry,
+        donorCandidates: composition.donorCandidates,
+        intent: composition.intent,
+        teardown: index.teardown,
+        compatibilityStatus: compatibility.status,
+        workingTreeDirty: repo.isDirty,
+        knownFingerprint: compatibility.status === "supported",
+        executionMode
+      })
+    : await transformSelectedSpec({
+        entry,
+        teardown: index.teardown,
+        compatibilityStatus: compatibility.status,
+        workingTreeDirty: repo.isDirty,
+        knownFingerprint: compatibility.status === "supported",
+        executionMode
+      });
 
   if (transform.uncertainIdentifiers.length > 0) {
     if (!interactiveConfirm) {
@@ -384,7 +403,7 @@ export const transformIntoSandbox = async ({
 
   if (!confidenceResult.ok) {
     throw new TugError(
-      "TEARDOWN_IDENTITY_UNSURE",
+      transform.composition ? "COMPOSITION_NO_VIABLE_DONORS" : "TEARDOWN_IDENTITY_UNSURE",
       `Transform confidence ${transform.confidence.toFixed(2)} is below required threshold.`
     );
   }

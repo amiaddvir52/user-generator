@@ -57,7 +57,7 @@ tug index --repo <path> [--reindex] [--json]
 tug explain --repo <path> "<prompt>" [--top <n>] [--json]
 tug explain-teardowns --repo <path> [--json]
 tug dry-run --repo <path> --spec <file> --test "<title>" [--yes] [--keep-sandbox] [--json]
-tug run --repo <path> "<prompt>" [--execution-mode <full|fast>] [--no-auto-fallback] [--yes] [--trust-unknown] [--output <file>] [--export-env] [--json]
+tug run --repo <path> "<prompt>" [--execution-mode <full|fast>] [--no-auto-fallback] [--no-compose] [--yes] [--trust-unknown] [--output <file>] [--export-env] [--json]
 tug gc [--max-age-days <n>] [--json]
 ```
 
@@ -133,6 +133,17 @@ tug gc [--max-age-days <n>] [--json]
   - `TUG_VALIDATION_CACHE_ENABLED=0` disables validation cache usage.
   - `TUG_VALIDATION_CACHE_TTL_MS=<ms>` overrides validation cache TTL (default: `600000`).
 
+## Dynamic composition
+
+When a prompt mentions two or more action verbs (e.g. "create account and upgrade subscription") or when ranking yields no clear single winner, TUG composes a synthetic test by splicing action fragments from the top-ranked donor tests into the highest-ranked base test:
+
+- Base test = highest-ranked candidate. Donors = next candidates that add keyword/hint signal the base lacks.
+- Fragments are added between the base's setup statements and its first assertion.
+- Donor imports are merged into the base; fragments that reference unimportable identifiers cause a fail-closed exit with a typed reason code (see below).
+- Synthetic specs carry a lower confidence score and the merged spec runs through the same `tsc --noEmit` + `playwright --list` gates as a single-source transform before execution.
+
+Opt out with `tug run --no-compose ...`. Use `tug explain` to preview the proposed base + donors before running.
+
 ## Reason codes
 
 On failure, the CLI emits a reason code (`Reason: <CODE>` in text mode, `reason` in JSON mode), for example:
@@ -142,3 +153,6 @@ On failure, the CLI emits a reason code (`Reason: <CODE>` in text mode, `reason`
 - `TEARDOWN_IDENTITY_UNSURE`
 - `VALIDATION_FAILED`
 - `CREDENTIAL_MARKER_MISSING`
+- `COMPOSITION_FRAGMENT_INCOMPATIBLE` — a donor fragment references a helper unreachable from the base
+- `COMPOSITION_UNRESOLVED_IDENTIFIER` — the composed spec has an identifier with no import or declaration
+- `COMPOSITION_NO_VIABLE_DONORS` — composition was requested but no donor added signal

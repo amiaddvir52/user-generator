@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { loadRunContext } from "../../common/context.js";
 import { TugError } from "../../common/errors.js";
 import { printResult, writeJsonFile } from "../../common/output.js";
@@ -14,7 +16,7 @@ import { runSandboxedTest } from "../../execute/runner.js";
 import { parseCredentialExecution } from "../../execute/output-parser.js";
 import { chooseFromCandidates, confirmPrompt } from "../prompt.js";
 import { findEntryBySpecAndTitle, getOrBuildIndex, renderRemovedCallTable, transformIntoSandbox } from "../workflow.js";
-import type { ExecutionMode, RunTiming } from "../../common/types.js";
+import type { ExecutionMode, Intent, RankedCandidate, RunTiming, SpecIndexEntry } from "../../common/types.js";
 
 export const runRunCommand = async (
   prompt: string | undefined,
@@ -33,6 +35,7 @@ export const runRunCommand = async (
     environment?: string;
     executionMode?: ExecutionMode;
     autoFallback?: boolean;
+    compose?: boolean;
   }
 ) => {
   const totalStartedAt = Date.now();
@@ -65,7 +68,7 @@ export const runRunCommand = async (
   });
   const selectionStartedAt = Date.now();
 
-  let entry;
+  let entry: SpecIndexEntry;
   let selectionMeta:
     | {
         ambiguous: boolean;
@@ -73,6 +76,7 @@ export const runRunCommand = async (
         reasons: string[];
       }
     | undefined;
+  let composeContext: { intent: Intent; donorCandidates: RankedCandidate[] } | undefined;
 
   if (options.spec && options.test) {
     entry = findEntryBySpecAndTitle({
@@ -102,18 +106,48 @@ export const runRunCommand = async (
       reasons: selection.selected.reasons
     };
 
-    if (selection.ambiguous && !options.yes) {
-      const topChoices = selection.ranked.slice(0, 3);
-      const selectionIndex = await chooseFromCandidates({
-        message: "Multiple close candidates matched your prompt:",
-        options: topChoices.map(
-          (candidate) => `${candidate.entry.testTitle} (${candidate.entry.filePath}) score=${candidate.score.toFixed(2)}`
-        )
-      });
-      entry = topChoices[selectionIndex].entry;
-    }
+    const composeEnabled = options.compose !== false;
+    const donorCandidates = selection.compositionCandidates;
+    const compositionAvailable = composeEnabled && donorCandidates.length > 0;
 
-    if (selection.ambiguous && options.yes) {
+    if (compositionAvailable && !options.yes) {
+      const donorCount = donorCandidates.length;
+      const donorWord = donorCount === 1 ? "donor" : "donors";
+      const donorSummary = donorCandidates
+        .map((candidate) => `${candidate.entry.testTitle} (${path.basename(candidate.entry.filePath)})`)
+        .join(", ");
+      const choiceIndex = await chooseFromCandidates({
+        message: intent.compose
+          ? `Prompt mentions multiple actions — no single test fully matches. Compose ${entry.testTitle} + [${donorSummary}]?`
+          : `No clear single match (margin ${selection.margin.toFixed(2)}). Compose ${entry.testTitle} + [${donorSummary}]?`,
+        options: [
+          "Pick a single test from the top candidates",
+          `Compose: splice ${entry.testTitle} + ${donorCount} ${donorWord}`,
+          "Cancel"
+        ]
+      });
+      if (choiceIndex === 0) {
+        const topChoices = selection.ranked.slice(0, 3);
+        const selectionIndex = await chooseFromCandidates({
+          message: "Pick a single test:",
+          options: topChoices.map(
+            (candidate) => `${candidate.entry.testTitle} (${candidate.entry.filePath}) score=${candidate.score.toFixed(2)}`
+          )
+        });
+        entry = topChoices[selectionIndex].entry;
+      } else if (choiceIndex === 1) {
+        composeContext = { intent, donorCandidates };
+      } else {
+        throw new TugError("USER_CANCELED", "Execution canceled by user.");
+      }
+    } else if (compositionAvailable && options.yes) {
+      const donorCount = donorCandidates.length;
+      const donorWord = donorCount === 1 ? "donor" : "donors";
+      process.stderr.write(
+        `Warning: composing synthetic spec under --yes from base "${entry.testTitle}" + ${donorCount} ${donorWord}.\n`
+      );
+      composeContext = { intent, donorCandidates };
+    } else if (selection.ambiguous && options.yes) {
       process.stderr.write(
         "Warning: ambiguous candidate selection under --yes, defaulting to top-ranked test.\n"
       );
@@ -163,7 +197,8 @@ export const runRunCommand = async (
       index,
       interactiveConfirm: !options.yes,
       executionMode,
-      env: executionEnv
+      env: executionEnv,
+      composition: composeContext
     });
     const transformMs = Date.now() - transformStartedAt;
 
@@ -186,7 +221,19 @@ export const runRunCommand = async (
       );
 
       if (showPreviewAndPrompt) {
+        const composition = pipeline.transform.composition;
+        const compositionLines = composition
+          ? [
+              `Composition: ${composition.strategy} — no single test fully matched`,
+              `  base:  ${entry.testTitle} (${path.basename(composition.baseSourceFile)})`,
+              ...composition.donors.map((donor) => `  donor: ${path.basename(donor)}`),
+              `  spliced fragments: ${composition.fragmentCount}`,
+              ""
+            ]
+          : [];
+
         const preview = [
+          ...compositionLines,
           `Selected test: ${entry.testTitle}`,
           `Source: ${entry.filePath}`,
           `Execution mode: ${executionMode}`,
@@ -208,7 +255,7 @@ export const runRunCommand = async (
             defaultNo: true
           });
           if (!confirmed) {
-            throw new TugError("EXECUTION_FAILED", "Execution canceled by user.");
+            throw new TugError("USER_CANCELED", "Execution canceled by user.");
           }
         }
       }
@@ -322,6 +369,7 @@ export const runRunCommand = async (
       title: entry.testTitle
     },
     selection: selectionMeta,
+    composition: result.pipeline.transform.composition,
     environment: context.environment,
     executionMode: result.executionMode,
     fallbackTriggered,
@@ -369,6 +417,9 @@ export const runRunCommand = async (
     payload,
     text: [
       `Execution succeeded for ${entry.testTitle}`,
+      result.pipeline.transform.composition
+        ? `Composed from ${result.pipeline.transform.composition.donors.length} donor(s): ${result.pipeline.transform.composition.donors.join(", ")}`
+        : "",
       `Environment: ${context.environment}`,
       `Execution mode: ${result.executionMode}`,
       `Fallback triggered: ${fallbackTriggered ? "yes" : "no"}`,
