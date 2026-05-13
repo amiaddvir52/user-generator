@@ -52,14 +52,20 @@ The CLI uses these values as defaults, with this precedence:
 ## TUG commands
 
 ```bash
-tug validate --repo <path> [--strict] [--json]
-tug index --repo <path> [--reindex] [--json]
-tug explain --repo <path> "<prompt>" [--top <n>] [--json]
-tug explain-teardowns --repo <path> [--json]
-tug dry-run --repo <path> --spec <file> --test "<title>" [--yes] [--keep-sandbox] [--json]
-tug run --repo <path> "<prompt>" [--execution-mode <full|fast>] [--no-auto-fallback] [--no-compose] [--yes] [--trust-unknown] [--output <file>] [--export-env] [--json]
+tug validate --repo <path> [--strict] [--trust-unknown] [--json]
+tug index --repo <path> [--reindex] [--strict] [--trust-unknown] [--json]
+tug explain --repo <path> "<prompt>" [--top <n>] [--reindex] [--no-compose] [--strict] [--trust-unknown] [--json]
+tug explain-teardowns --repo <path> [--reindex] [--strict] [--trust-unknown] [--json]
+tug dry-run --repo <path> --spec <file> --test "<title>" [--yes] [--keep-sandbox] [--reindex] [--strict] [--trust-unknown] [--json]
+tug run --repo <path> "<prompt>" [--spec <file>] [--test "<title>"] [--environment <value>] [--execution-mode <full|fast>] [--no-auto-fallback] [--no-compose] [--yes] [--keep-sandbox] [--reindex] [--strict] [--trust-unknown] [--output <file>] [--export-env] [--json]
 tug gc [--max-age-days <n>] [--json]
 ```
+
+Notes on shared flags:
+
+- `--strict` and `--trust-unknown` are accepted on every command except `gc` (the safety gates apply to repo-touching operations).
+- `--reindex` forces the spec index to be rebuilt and is accepted on `index`, `explain`, `explain-teardowns`, `dry-run`, and `run`.
+- `tug run` also accepts `--spec` / `--test` to bypass prompt-based selection and run a specific test directly.
 
 ## Dry-run-first workflow
 
@@ -146,13 +152,38 @@ Opt out with `tug run --no-compose ...`. Use `tug explain` to preview the propos
 
 ## Reason codes
 
-On failure, the CLI emits a reason code (`Reason: <CODE>` in text mode, `reason` in JSON mode), for example:
+On failure, the CLI emits a reason code (`Reason: <CODE>` in text mode, `reason` in JSON mode). The full set is defined in `src/tug/common/types.ts`:
 
-- `FINGERPRINT_UNKNOWN`
-- `TEARDOWN_HOOK_HAS_UNKNOWN_CALL`
-- `TEARDOWN_IDENTITY_UNSURE`
-- `VALIDATION_FAILED`
-- `CREDENTIAL_MARKER_MISSING`
+Repo / preflight gates:
+
+- `PATH_INVALID` — `--repo` path is missing or not a directory
+- `PATH_NOT_GIT_REPO` — the target path is not a git repository
+- `STRUCTURE_INVALID` — repo layout does not match expectations (missing `package.json`, playwright config, etc.)
+- `FINGERPRINT_UNKNOWN` — the resolved fingerprint is not in the supported set (block unless `--trust-unknown`)
+- `PLAYWRIGHT_INCOMPATIBLE` — Playwright version is outside the supported range
+- `WORKING_TREE_DIRTY` — `--strict` blocked execution because the working tree is dirty
+
+Selection / transform:
+
+- `CANDIDATE_AMBIGUOUS` — ranking could not pick a single winner and composition was unavailable
+- `SERIAL_DEPENDENCY` — selected test depends on serial state that cannot be isolated
+- `TRANSFORM_INCOMPLETE` — required transform steps did not converge
+- `TEARDOWN_IDENTITY_UNSURE` — teardown identity could not be resolved with confidence
+- `TEARDOWN_HOOK_HAS_UNKNOWN_CALL` — a teardown hook calls an unknown identifier
+
+Composition:
+
 - `COMPOSITION_FRAGMENT_INCOMPATIBLE` — a donor fragment references a helper unreachable from the base
 - `COMPOSITION_UNRESOLVED_IDENTIFIER` — the composed spec has an identifier with no import or declaration
 - `COMPOSITION_NO_VIABLE_DONORS` — composition was requested but no donor added signal
+
+Validation / sandbox / execution:
+
+- `VALIDATION_FAILED` — `tsc --noEmit` or `playwright --list` rejected the sandbox spec
+- `CREDENTIAL_MARKER_MISSING` — required credential markers were not found in the source spec
+- `ENV_INCOMPLETE` — required environment variables are missing
+- `CONFIG_INCOMPLETE` — required onboarding/config values are missing
+- `SANDBOX_COLLISION` — the sandbox path is already in use
+- `EXECUTION_FAILED` — the Playwright run exited non-zero
+- `USER_CANCELED` — user declined a confirmation prompt
+- `UNKNOWN_ERROR` — uncategorized failure (escape hatch)
