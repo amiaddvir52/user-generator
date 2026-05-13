@@ -165,12 +165,15 @@ describe("selector composition candidates", () => {
 
 describe("fragment extractor", () => {
   it("classifies setup / action / assertion statements", async () => {
+    // loginHelper is imported from a registered helper module → demoted to setup.
+    // createAccount is a free call (no helper import) → stays as a real action.
     const dir = await createTempDir();
     const specPath = await writeFile(
       dir,
       "sample.spec.ts",
       [
         "import { test, expect } from '@playwright/test';",
+        "import { loginHelper } from '@playwright-helpers/login';",
         "test('creates account', async () => {",
         "  await loginHelper();",
         "  await createAccount();",
@@ -181,12 +184,40 @@ describe("fragment extractor", () => {
     );
 
     const fragments = await extractFragments({
-      entry: buildEntry(specPath, "creates account", { helperImports: ["@helpers/login"] }),
+      entry: buildEntry(specPath, "creates account", {
+        helperImports: ["@playwright-helpers/login"]
+      }),
       teardown: emptyTeardown
     });
 
     expect(fragments.map((fragment) => fragment.kind)).toEqual(["setup", "action", "assertion"]);
     expect(fragments[1].identifier).toBe("createAccount");
+  });
+
+  it("does NOT demote leading actions whose names merely look helper-like but aren't imported from a helper module", async () => {
+    // Regression guard for the narrowed demotion: a real action named loginUser()
+    // must stay an "action" so it gets considered for splicing into a composed spec.
+    const dir = await createTempDir();
+    const specPath = await writeFile(
+      dir,
+      "naming.spec.ts",
+      [
+        "import { test, expect } from '@playwright/test';",
+        "test('logs user in', async () => {",
+        "  await loginUser();",
+        "  expect(true).toBe(true);",
+        "});",
+        ""
+      ].join("\n")
+    );
+
+    const fragments = await extractFragments({
+      entry: buildEntry(specPath, "logs user in", { helperImports: [] }),
+      teardown: emptyTeardown
+    });
+
+    expect(fragments[0].kind).toBe("action");
+    expect(fragments[0].identifier).toBe("loginUser");
   });
 
   it("classifies known teardown calls as teardown", async () => {
@@ -515,8 +546,9 @@ describe("composeSyntheticSpec", () => {
     const baseEntry = buildEntry(basePath, "creates account");
     const donorEntry = buildEntry(donorPath, "mystery upgrade");
 
-    await expect(
-      composeSyntheticSpec({
+    let caught: unknown;
+    try {
+      await composeSyntheticSpec({
         baseEntry,
         donorCandidates: [
           { entry: baseEntry, score: 1.0, reasons: [] },
@@ -528,7 +560,72 @@ describe("composeSyntheticSpec", () => {
         workingTreeDirty: false,
         knownFingerprint: true,
         executionMode: "full"
-      })
-    ).rejects.toThrow(TugError);
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(TugError);
+    expect((caught as TugError).reason).toBe("COMPOSITION_FRAGMENT_INCOMPATIBLE");
+  });
+
+  it("throws COMPOSITION_NO_VIABLE_DONORS when compose was requested but no donor adds signal", async () => {
+    // Prompt mentions two canonical actions (compose=true), but the only donor
+    // duplicates the base test's calls — nothing new to splice. The composer
+    // must fail closed instead of silently running a base test that doesn't
+    // cover the second action.
+    const dir = await createTempDir();
+    const basePath = await writeFile(
+      dir,
+      "base.spec.ts",
+      [
+        "import { test, expect } from '@playwright/test';",
+        "import { createAccount } from './helpers';",
+        "test('creates account', async () => {",
+        "  await createAccount();",
+        "  expect(true).toBe(true);",
+        "});",
+        ""
+      ].join("\n")
+    );
+    const donorPath = await writeFile(
+      dir,
+      "donor.spec.ts",
+      [
+        "import { test, expect } from '@playwright/test';",
+        "import { createAccount } from './helpers';",
+        "test('creates account again', async () => {",
+        "  await createAccount();",
+        "  expect(true).toBe(true);",
+        "});",
+        ""
+      ].join("\n")
+    );
+    await writeFile(dir, "helpers.ts", "export const createAccount = async () => {};\n");
+
+    const intent = parseIntent("create account and upgrade subscription");
+    expect(intent.compose).toBe(true);
+    const baseEntry = buildEntry(basePath, "creates account");
+    const donorEntry = buildEntry(donorPath, "creates account again");
+
+    let caught: unknown;
+    try {
+      await composeSyntheticSpec({
+        baseEntry,
+        donorCandidates: [
+          { entry: baseEntry, score: 1.0, reasons: [] },
+          { entry: donorEntry, score: 0.95, reasons: [] }
+        ],
+        intent,
+        teardown: emptyTeardown,
+        compatibilityStatus: "supported",
+        workingTreeDirty: false,
+        knownFingerprint: true,
+        executionMode: "full"
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(TugError);
+    expect((caught as TugError).reason).toBe("COMPOSITION_NO_VIABLE_DONORS");
   });
 });

@@ -1,9 +1,8 @@
 import { promises as fs } from "node:fs";
-import { Node, Project, SyntaxKind, type Block, type CallExpression, type Statement } from "ts-morph";
+import { Node, Project, SourceFile, SyntaxKind, type CallExpression, type Statement } from "ts-morph";
 
 import type { SpecIndexEntry, TeardownDetectionResult } from "../common/types.js";
-
-const TEST_PATTERN = /(^|\.)test(?:\.(only|skip|fixme|fail))?$/;
+import { findTestCall, getTestBody } from "./test-call.js";
 
 export type FragmentKind = "setup" | "action" | "assertion" | "teardown";
 
@@ -111,32 +110,28 @@ const collectReferencedIdentifiers = (statement: Statement): string[] => {
   return [...identifiers].sort();
 };
 
-const findTestCall = (sourceFile: import("ts-morph").SourceFile, testTitle: string): CallExpression | undefined => {
-  return sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression).find((callExpression) => {
-    const expressionText = callExpression.getExpression().getText();
-    if (!TEST_PATTERN.test(expressionText)) {
-      return false;
+const collectIdentifiersImportedFromHelperModules = (
+  sourceFile: SourceFile,
+  helperImports: string[]
+): Set<string> => {
+  const helperSet = new Set(helperImports);
+  const names = new Set<string>();
+  sourceFile.getImportDeclarations().forEach((declaration) => {
+    const moduleSpecifier = declaration.getModuleSpecifierValue();
+    if (!helperSet.has(moduleSpecifier)) {
+      return;
     }
-    const firstArgument = callExpression.getArguments()[0];
-    if (!firstArgument || (!Node.isStringLiteral(firstArgument) && !Node.isNoSubstitutionTemplateLiteral(firstArgument))) {
-      return false;
+    declaration.getNamedImports().forEach((named) => names.add(named.getName()));
+    const defaultImport = declaration.getDefaultImport();
+    if (defaultImport) {
+      names.add(defaultImport.getText());
     }
-    return firstArgument.getLiteralText() === testTitle;
+    const namespaceImport = declaration.getNamespaceImport();
+    if (namespaceImport) {
+      names.add(namespaceImport.getText());
+    }
   });
-};
-
-const getTestBody = (callExpression: CallExpression): Block | undefined => {
-  const callback = callExpression
-    .getArguments()
-    .find((argument) => Node.isArrowFunction(argument) || Node.isFunctionExpression(argument));
-  if (!callback || !Node.isFunctionLikeDeclaration(callback)) {
-    return undefined;
-  }
-  const body = callback.getBody();
-  if (!body || !Node.isBlock(body)) {
-    return undefined;
-  }
-  return body;
+  return names;
 };
 
 const classifyStatement = ({
@@ -188,6 +183,7 @@ export const extractFragments = async ({
 
   const confirmed = new Set(teardown.confirmed);
   const suspected = new Set(teardown.suspected);
+  const helperImportNames = collectIdentifiersImportedFromHelperModules(sourceFile, entry.helperImports);
   const fragments: Fragment[] = [];
   let seenExpect = false;
   let leadingSetupDone = false;
@@ -201,7 +197,10 @@ export const extractFragments = async ({
     let resolvedKind = kind;
     if (!leadingSetupDone && kind === "action") {
       const identifier = getStatementCallIdentifier(statement);
-      if (identifier && entry.helperImports.length > 0 && /helper|login|navigate|setup|init/i.test(identifier)) {
+      // Only demote leading "actions" whose callee actually comes from a helper module.
+      // The previous regex (/helper|login|navigate|setup|init/i) demoted real actions
+      // like loginUser() and dropped them from splicing.
+      if (identifier && helperImportNames.has(identifier)) {
         resolvedKind = "setup";
       }
     }

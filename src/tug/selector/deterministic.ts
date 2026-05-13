@@ -20,10 +20,14 @@ const canonicalActionsIn = (tokens: Iterable<string>): Set<string> => {
   return actions;
 };
 
+// Returns true when every canonical action mentioned in the prompt also appears
+// in the base test's title or describe stack. Vacuously true when the prompt
+// has no recognized actions — there's nothing to cover, so composition adds
+// no value.
 const baseCoversAllPromptActions = (base: RankedCandidate, intent: Intent): boolean => {
   const promptActions = canonicalActionsIn(intent.keywords);
   if (promptActions.size === 0) {
-    return false;
+    return true;
   }
   const baseTokens = [base.entry.testTitle, ...base.entry.describeTitles];
   const baseActions = canonicalActionsIn(baseTokens);

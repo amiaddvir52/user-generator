@@ -58,7 +58,7 @@ export const createTugProgram = ({
     .argument("<prompt>", "Prompt describing the desired provisioned state.")
     .option("--reindex", "Force index rebuild.")
     .option("--top <n>", "Number of candidates to show.")
-    .option("--no-compose", "Hide the dynamic composition plan from the output.")
+    .option("--no-compose", "Disable dynamic composition planning for the prompt.")
     .action(async (prompt, options) => runExplainCommand(prompt, options));
 
   withCommonOutputOptions(withSafetyOptions(withRepoOption(program.command("dry-run"))))

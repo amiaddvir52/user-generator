@@ -1,6 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { Node, Project, SyntaxKind, type Block, type CallExpression, type SourceFile } from "ts-morph";
+import { Node, Project, SyntaxKind, type Block, type SourceFile } from "ts-morph";
 
 import { TugError } from "../common/errors.js";
 import type {
@@ -14,38 +14,13 @@ import type {
   TransformResult
 } from "../common/types.js";
 import { extractFragments, type Fragment } from "./fragment-extractor.js";
+import { collectBodyDeclaredNames, findTestCall, getTestBody } from "./test-call.js";
 import { applyBaseTransformMutations } from "./transformer.js";
 
-const TEST_PATTERN = /(^|\.)test(?:\.(only|skip|fixme|fail))?$/;
-const COMPOSED_FRAGMENT_BANNER = "/* tug: composed fragment from {{donor}} */";
-
-const findTestCall = (sourceFile: SourceFile, testTitle: string): CallExpression | undefined => {
-  return sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression).find((callExpression) => {
-    const expressionText = callExpression.getExpression().getText();
-    if (!TEST_PATTERN.test(expressionText)) {
-      return false;
-    }
-    const firstArgument = callExpression.getArguments()[0];
-    if (!firstArgument || (!Node.isStringLiteral(firstArgument) && !Node.isNoSubstitutionTemplateLiteral(firstArgument))) {
-      return false;
-    }
-    return firstArgument.getLiteralText() === testTitle;
-  });
-};
-
-const getTestBody = (callExpression: CallExpression): Block | undefined => {
-  const callback = callExpression
-    .getArguments()
-    .find((argument) => Node.isArrowFunction(argument) || Node.isFunctionExpression(argument));
-  if (!callback || !Node.isFunctionLikeDeclaration(callback)) {
-    return undefined;
-  }
-  const body = callback.getBody();
-  if (!body || !Node.isBlock(body)) {
-    return undefined;
-  }
-  return body;
-};
+// `//`-line banner so a donor filename containing `*/` can't terminate a block
+// comment and inject syntax after it.
+const buildBanner = (donorFilePath: string): string =>
+  `// tug: composed fragment from ${path.basename(donorFilePath).replace(/[\r\n]/g, " ")}`;
 
 const collectImportedNames = (sourceFile: SourceFile): Set<string> => {
   const names = new Set<string>();
@@ -282,10 +257,21 @@ export const composeSyntheticSpec = async ({
   const baseTextRunning = () => baseText + "\n" + accumulatedFragmentTexts.join("\n");
   let totalFragmentCount = 0;
 
-  const donorOnly = donorCandidates.filter(
-    (candidate) =>
-      candidate.entry.filePath !== baseEntry.filePath || candidate.entry.testTitle !== baseEntry.testTitle
-  );
+  const seenDonorKeys = new Set<string>();
+  const donorOnly = donorCandidates.filter((candidate) => {
+    if (
+      candidate.entry.filePath === baseEntry.filePath &&
+      candidate.entry.testTitle === baseEntry.testTitle
+    ) {
+      return false;
+    }
+    const key = `${candidate.entry.filePath}::${candidate.entry.testTitle}`;
+    if (seenDonorKeys.has(key)) {
+      return false;
+    }
+    seenDonorKeys.add(key);
+    return true;
+  });
 
   for (const donor of donorOnly) {
     const donorEntry = donor.entry;
@@ -338,7 +324,7 @@ export const composeSyntheticSpec = async ({
     });
 
     const insertionIndex = findSpliceInsertionIndex(baseBody);
-    const banner = COMPOSED_FRAGMENT_BANNER.replace("{{donor}}", path.basename(donorEntry.filePath));
+    const banner = buildBanner(donorEntry.filePath);
     const fragmentBlockText = [banner, ...signalFragments.map((fragment) => fragment.text)].join("\n");
     baseBody.insertStatements(insertionIndex, fragmentBlockText);
 
@@ -348,6 +334,16 @@ export const composeSyntheticSpec = async ({
   }
 
   if (acceptedDonors.length === 0) {
+    // The caller explicitly asked for composition (multi-action prompt) but no
+    // donor fragment contributed new keyword/hint signal. Fail closed so the
+    // user knows the prompt's extra actions weren't covered, instead of
+    // silently running a base test that only covers part of the request.
+    if (intent.compose) {
+      throw new TugError(
+        "COMPOSITION_NO_VIABLE_DONORS",
+        "Composition was requested but no donor candidate added new signal over the base test."
+      );
+    }
     return applyBaseTransformMutations({
       sourceFile: baseSourceFile,
       entry: baseEntry,
@@ -360,9 +356,10 @@ export const composeSyntheticSpec = async ({
     });
   }
 
-  const finalImportedAndDeclared = new Set([
+  const finalInScopeNames = new Set([
     ...collectImportedNames(baseSourceFile),
-    ...collectTopLevelDeclaredNames(baseSourceFile)
+    ...collectTopLevelDeclaredNames(baseSourceFile),
+    ...collectBodyDeclaredNames(baseBody)
   ]);
 
   baseBody.getDescendantsOfKind(SyntaxKind.Identifier).forEach((identifier) => {
@@ -373,14 +370,23 @@ export const composeSyntheticSpec = async ({
         return;
       }
     }
+    // Skip identifier positions that *introduce* a binding rather than
+    // reference one (variable/parameter/function/class names, property keys).
+    if (parent) {
+      if (Node.isVariableDeclaration(parent) && parent.getNameNode() === identifier) return;
+      if (Node.isParameterDeclaration(parent) && parent.getNameNode() === identifier) return;
+      if (Node.isFunctionDeclaration(parent) && parent.getNameNode() === identifier) return;
+      if (Node.isClassDeclaration(parent) && parent.getNameNode() === identifier) return;
+      if (Node.isPropertyAssignment(parent) && parent.getNameNode() === identifier) return;
+      if (Node.isShorthandPropertyAssignment(parent) && parent.getNameNode() === identifier) {
+        // shorthand `{ foo }` — `foo` IS a reference; do not skip
+      }
+      if (Node.isBindingElement(parent) && parent.getPropertyNameNode() === identifier) return;
+    }
     if (isPlaywrightBuiltin(name) || isLanguagePrimitive(name)) {
       return;
     }
-    if (finalImportedAndDeclared.has(name)) {
-      return;
-    }
-    const scopeAware = identifier.getSymbol();
-    if (scopeAware) {
+    if (finalInScopeNames.has(name)) {
       return;
     }
     throw new TugError(

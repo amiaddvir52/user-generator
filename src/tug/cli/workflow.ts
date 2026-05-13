@@ -403,7 +403,7 @@ export const transformIntoSandbox = async ({
 
   if (!confidenceResult.ok) {
     throw new TugError(
-      transform.composition ? "COMPOSITION_NO_VIABLE_DONORS" : "TEARDOWN_IDENTITY_UNSURE",
+      "TEARDOWN_IDENTITY_UNSURE",
       `Transform confidence ${transform.confidence.toFixed(2)} is below required threshold.`
     );
   }
