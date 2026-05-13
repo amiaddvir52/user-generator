@@ -36,12 +36,8 @@ type RuntimeWorkspaceProps = {
   onGenerationPromptChange: (value: string) => void;
   onGenerateUser: () => void;
   onKeepSandboxChange: (value: boolean) => void;
-  onTrustUncertainTeardownChange: (value: boolean) => void;
-  onTrustUnknownChange: (value: boolean) => void;
   onExecutionPromptChange: (value: string) => void;
   selectedEnvironment: EnvironmentOption | undefined;
-  trustUncertainTeardown: boolean;
-  trustUnknown: boolean;
 };
 
 export const RuntimeWorkspace = ({
@@ -70,11 +66,7 @@ export const RuntimeWorkspace = ({
   onGenerationPromptChange,
   onGenerateUser,
   onKeepSandboxChange,
-  onTrustUncertainTeardownChange,
-  onTrustUnknownChange,
-  selectedEnvironment,
-  trustUncertainTeardown,
-  trustUnknown
+  selectedEnvironment
 }: RuntimeWorkspaceProps) => {
   const generationStatusMessage = describeGenerationProgress(generationElapsedSeconds, enableRcpMock);
 
@@ -203,7 +195,7 @@ export const RuntimeWorkspace = ({
           <div className="advanced-controls">
             <label
               className="ui-toggle tooltip-toggle"
-              title="Executes the test to create the user, but strips out all assertions (e.g., expect statements) to optimize execution speed. The actual test code (API/UI interactions) will still run."
+              data-tooltip="Executes the test to create the user, but strips out all assertions (e.g., expect statements) to optimize execution speed. The actual test code (API/UI interactions) will still run."
             >
               <input
                 checked={isFastMode}
@@ -212,8 +204,12 @@ export const RuntimeWorkspace = ({
                 type="checkbox"
               />
               Fast Mode
+              <span aria-hidden="true" className="info-icon">&#9432;</span>
             </label>
-            <label className="ui-toggle">
+            <label
+              className="ui-toggle tooltip-toggle"
+              data-tooltip="Starts a Redis Cloud Provisioning (RCP) mock service before the sandbox run and waits for its workflow to complete. Use when the test depends on RCP responses you want to stub instead of hitting the real service."
+            >
               <input
                 checked={enableRcpMock}
                 disabled={isGenerating}
@@ -221,8 +217,12 @@ export const RuntimeWorkspace = ({
                 type="checkbox"
               />
               Enable RCP mock before sandbox run (waits for workflow completion)
+              <span aria-hidden="true" className="info-icon">&#9432;</span>
             </label>
-            <label className="ui-toggle">
+            <label
+              className="ui-toggle tooltip-toggle"
+              data-tooltip="Preserves the temporary sandbox directory after the run finishes so you can inspect the generated test files, logs, and artifacts. Otherwise the sandbox is cleaned up automatically."
+            >
               <input
                 checked={keepSandbox}
                 disabled={isGenerating}
@@ -230,24 +230,7 @@ export const RuntimeWorkspace = ({
                 type="checkbox"
               />
               Keep sandbox directory after run
-            </label>
-            <label className="ui-toggle">
-              <input
-                checked={trustUnknown}
-                disabled={isGenerating}
-                onChange={(event) => onTrustUnknownChange(event.target.checked)}
-                type="checkbox"
-              />
-              Trust unknown repo fingerprint
-            </label>
-            <label className="ui-toggle">
-              <input
-                checked={trustUncertainTeardown}
-                disabled={isGenerating}
-                onChange={(event) => onTrustUncertainTeardownChange(event.target.checked)}
-                type="checkbox"
-              />
-              Trust uncertain teardown classification
+              <span aria-hidden="true" className="info-icon">&#9432;</span>
             </label>
           </div>
         </details>
