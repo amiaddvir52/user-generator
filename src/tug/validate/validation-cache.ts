@@ -6,7 +6,7 @@ import { resolveCacheRoot } from "../common/paths.js";
 
 export const VALIDATION_CACHE_ENABLED_ENV = "TUG_VALIDATION_CACHE_ENABLED";
 export const VALIDATION_CACHE_TTL_ENV = "TUG_VALIDATION_CACHE_TTL_MS";
-export const DEFAULT_VALIDATION_CACHE_TTL_MS = 10 * 60 * 1000;
+export const DEFAULT_VALIDATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 type ValidationCacheKind = "repo-list" | "sandbox-validation";
 

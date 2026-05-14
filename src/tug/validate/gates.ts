@@ -97,7 +97,9 @@ export const runPreflightGates = async ({
     const cacheKey = buildValidationCacheKey({
       kind: "repo-list",
       components: {
+        version: 2,
         fingerprint: fingerprint.fingerprint,
+        gitSha: repo.gitSha,
         repoPath: repo.absPath.replace(/\\/g, "/"),
         configPath: repo.playwrightConfigPath.replace(/\\/g, "/"),
         environment: env?.TUG_ENVIRONMENT ?? env?.env ?? null,

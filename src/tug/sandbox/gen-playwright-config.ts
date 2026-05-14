@@ -178,12 +178,25 @@ const preferredBrowserProject =
 const sandboxUse =
   ((preferredBrowserProject as { use?: Record<string, unknown> } | undefined)?.use) ?? {};
 
+const sandboxLightDisableValues = new Set(['0', 'false', 'no', 'off']);
+const sandboxLightRaw = (process.env['TUG_SANDBOX_LIGHT'] ?? '').trim().toLowerCase();
+const sandboxLightModeEnabled = !sandboxLightDisableValues.has(sandboxLightRaw);
+const sandboxUseEffective = sandboxLightModeEnabled
+  ? {
+      ...sandboxUse,
+      trace: 'retain-on-failure',
+      video: 'off',
+      screenshot: 'only-on-failure',
+      headless: true
+    }
+  : sandboxUse;
+
 const sandboxProject = {
   name: 'tug-sandbox',
   testDir: __dirname,
   testMatch: ['gen.spec.ts'],
   testIgnore: [] as string[],
-  use: sandboxUse
+  use: sandboxUseEffective
 };
 
 const baseGlobalSetupPaths = resolvePathSpecifiers((baseConfig as { globalSetup?: unknown }).globalSetup);

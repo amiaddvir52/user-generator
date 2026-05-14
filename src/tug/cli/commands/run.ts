@@ -16,7 +16,15 @@ import { runSandboxedTest } from "../../execute/runner.js";
 import { parseCredentialExecution } from "../../execute/output-parser.js";
 import { chooseFromCandidates, confirmPrompt } from "../prompt.js";
 import { findEntryBySpecAndTitle, getOrBuildIndex, renderRemovedCallTable, transformIntoSandbox } from "../workflow.js";
-import type { ExecutionMode, Intent, RankedCandidate, RunTiming, SpecIndexEntry } from "../../common/types.js";
+import { formatRunTimingSummary } from "../../common/timing.js";
+import type {
+  ExecutionMode,
+  Intent,
+  RankedCandidate,
+  RunDiagnostics,
+  RunTiming,
+  SpecIndexEntry
+} from "../../common/types.js";
 
 export const runRunCommand = async (
   prompt: string | undefined,
@@ -52,6 +60,7 @@ export const runRunCommand = async (
     environment: context.environment
   });
 
+  const preflightStartedAt = Date.now();
   const preflight = await runPreflightGates({
     repoPath: context.repoPath,
     strict: Boolean(options.strict),
@@ -59,13 +68,16 @@ export const runRunCommand = async (
     dryList: true,
     env: executionEnv
   });
+  const preflightMs = Date.now() - preflightStartedAt;
 
+  const indexStartedAt = Date.now();
   const { index } = await getOrBuildIndex({
     repo: preflight.repo,
     fingerprint: preflight.fingerprint.fingerprint,
     compatibility: preflight.compatibility,
     forceReindex: Boolean(options.reindex)
   });
+  const indexMs = Date.now() - indexStartedAt;
   const selectionStartedAt = Date.now();
 
   let entry: SpecIndexEntry;
@@ -176,6 +188,10 @@ export const runRunCommand = async (
     timing: {
       transformMs: number;
       executeMs: number;
+      sandboxBuildMs?: number;
+      sandboxValidationMs?: number;
+      sandboxValidationCacheHit?: boolean;
+      cleanupMs?: number;
     };
   };
 
@@ -203,6 +219,13 @@ export const runRunCommand = async (
     const transformMs = Date.now() - transformStartedAt;
 
     let cleanupAfterSuccess = !options.keepSandbox;
+    const timing: ExecutionAttemptResult["timing"] = {
+      transformMs,
+      executeMs: 0,
+      sandboxBuildMs: pipeline.timing.sandboxBuildMs,
+      sandboxValidationMs: pipeline.timing.sandboxValidationMs,
+      sandboxValidationCacheHit: pipeline.timing.sandboxValidationCacheHit
+    };
     try {
       const grepPattern = buildPlaywrightGrepPattern(entry);
       const resolvedCommand = formatCommandForDisplay(
@@ -267,7 +290,7 @@ export const runRunCommand = async (
         grepPattern,
         env: executionEnv
       });
-      const executeMs = Date.now() - executeStartedAt;
+      timing.executeMs = Date.now() - executeStartedAt;
 
       const credentialExecution = parseCredentialExecution(execution.markerLines);
       if (
@@ -285,10 +308,7 @@ export const runRunCommand = async (
         pipeline,
         credentialExecution,
         executionMode,
-        timing: {
-          transformMs,
-          executeMs
-        }
+        timing
       };
     } catch (error) {
       if (cleanupOnFailure) {
@@ -299,13 +319,16 @@ export const runRunCommand = async (
       throw error;
     } finally {
       if (cleanupAfterSuccess) {
+        const cleanupStartedAt = Date.now();
         await cleanupSandbox(pipeline.sandbox);
+        timing.cleanupMs = Date.now() - cleanupStartedAt;
       }
     }
   };
 
   let fallbackTriggered = false;
   let fallbackWarning: string | undefined;
+  let fallbackMs: number | undefined;
   let result: ExecutionAttemptResult;
 
   if (requestedExecutionMode === "fast") {
@@ -330,11 +353,13 @@ export const runRunCommand = async (
         process.stderr.write(`${fallbackWarning}\n`);
       }
 
+      const fallbackStartedAt = Date.now();
       result = await executeAttempt({
         executionMode: "full",
         showPreviewAndPrompt: false,
         cleanupOnFailure: false
       });
+      fallbackMs = Date.now() - fallbackStartedAt;
     }
   } else {
     result = await executeAttempt({
@@ -358,8 +383,23 @@ export const runRunCommand = async (
     selectionMs,
     transformMs: result.timing.transformMs,
     executeMs: result.timing.executeMs,
-    totalMs: Date.now() - totalStartedAt
+    totalMs: Date.now() - totalStartedAt,
+    preflightMs,
+    indexMs,
+    sandboxBuildMs: result.timing.sandboxBuildMs,
+    sandboxValidationMs: result.timing.sandboxValidationMs,
+    cleanupMs: result.timing.cleanupMs,
+    fallbackMs,
+    repoListCacheHit: preflight.repoListCacheHit,
+    sandboxValidationCacheHit: result.timing.sandboxValidationCacheHit
   };
+  const diagnostics: RunDiagnostics = {
+    timingSummary: formatRunTimingSummary(timing)
+  };
+
+  if (!options.json) {
+    process.stderr.write(`${diagnostics.timingSummary}\n`);
+  }
   const payload = {
     ok: true,
     fingerprint: preflight.fingerprint.fingerprint,
@@ -381,6 +421,7 @@ export const runRunCommand = async (
     accounts: result.credentialExecution.accounts,
     runState: result.credentialExecution.runState,
     timing,
+    diagnostics,
     warnings
   };
 
