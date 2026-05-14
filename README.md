@@ -137,7 +137,9 @@ Notes on shared flags:
   - `TUG_SETUP_CACHE_TTL_MS=<ms>` overrides cache TTL (default: `3600000`).
 - Validation cache controls:
   - `TUG_VALIDATION_CACHE_ENABLED=0` disables validation cache usage.
-  - `TUG_VALIDATION_CACHE_TTL_MS=<ms>` overrides validation cache TTL (default: `600000`).
+  - `TUG_VALIDATION_CACHE_TTL_MS=<ms>` overrides validation cache TTL (default: `86400000`, i.e. 24h). The repo-list cache key incorporates the repo `gitSha` and the sandbox-validation cache key incorporates a hash of the transformed spec, so spec edits invalidate cached entries even before the TTL expires.
+- Sandbox runtime controls:
+  - `TUG_SANDBOX_LIGHT` (default: enabled) speeds up sandbox runs by forcing `trace: 'retain-on-failure'`, `screenshot: 'only-on-failure'`, `video: 'off'`, and `headless: true` for the sandbox Playwright project. Traces and screenshots are still retained for failed runs so debugging stays intact. Disable by setting to one of `0`, `false`, `no`, or `off` (case-insensitive) — any other value (or unset) keeps light mode on.
 
 ## Dynamic composition
 

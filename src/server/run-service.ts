@@ -21,9 +21,11 @@ import type {
   ExecutionMode,
   GeneratedAccounts,
   RemovedCallsite,
+  RunDiagnostics,
   RunState,
   RunTiming
 } from "../tug/common/types.js";
+import { formatRunTimingSummary } from "../tug/common/timing.js";
 
 export type UserGenerationInput = {
   prompt?: string;
@@ -63,6 +65,7 @@ export type UserGenerationPayload = {
   accounts: GeneratedAccounts;
   runState: RunState;
   timing?: RunTiming;
+  diagnostics?: RunDiagnostics;
   warnings: string[];
 };
 
@@ -362,10 +365,6 @@ const runUserGeneration = async (
       warningLines.push(`RCP mock workflow run: ${rcpMockRunUrl}`);
     }
 
-    const logFilePath = getLogFilePath();
-    const warnings = logFilePath
-      ? [...warningLines, `Run log: ${logFilePath}`]
-      : warningLines;
     const timing: RunTiming = {
       selectionMs,
       transformMs: attemptResult.timing.transformMs,
@@ -380,6 +379,14 @@ const runUserGeneration = async (
       repoListCacheHit: preflight.repoListCacheHit,
       sandboxValidationCacheHit: attemptResult.timing.sandboxValidationCacheHit
     };
+    const diagnostics: RunDiagnostics = {
+      timingSummary: formatRunTimingSummary(timing)
+    };
+
+    const logFilePath = getLogFilePath();
+    const warnings = logFilePath
+      ? [...warningLines, `Run log: ${logFilePath}`]
+      : warningLines;
     tugLog("run.done", {
       fingerprint: preflight.fingerprint.fingerprint,
       sandboxPath: attemptResult.pipeline.sandbox.path,
@@ -408,6 +415,7 @@ const runUserGeneration = async (
       accounts: attemptResult.credentialExecution.accounts,
       runState: attemptResult.credentialExecution.runState,
       timing,
+      diagnostics,
       warnings
     };
   } catch (error) {

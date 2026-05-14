@@ -226,6 +226,10 @@ export type RunTiming = {
   sandboxValidationCacheHit?: boolean;
 };
 
+export type RunDiagnostics = {
+  timingSummary: string;
+};
+
 export type CommandResult = {
   ok: true;
   data: Record<string, unknown>;
